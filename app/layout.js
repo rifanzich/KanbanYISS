@@ -1,7 +1,11 @@
 export const metadata = {
-  title: "Ruang — Portal Kerja Tim",
+  title: "Kanban YISS — Portal Kerja Tim",
   description: "Papan kanban, catatan, dan checklist tugas dalam satu portal.",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.png",
+  },
 };
 
 export const viewport = {

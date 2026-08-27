@@ -1,6 +1,6 @@
 {
-  "name": "Ruang — Portal Kerja Tim",
-  "short_name": "Ruang",
+  "name": "Kanban YISS — Portal Kerja Tim",
+  "short_name": "Kanban YISS",
   "description": "Papan kanban, catatan, dan checklist tugas dalam satu portal.",
   "start_url": "/",
   "scope": "/",

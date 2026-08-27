@@ -225,6 +225,18 @@ const RESPONSIVE_CSS = `
 }
 `;
 
+function LogoMark({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="512" height="512" rx="112" fill="#1B2430" />
+      <rect x="120" y="288" width="72" height="128" rx="20" fill="#C48A2E" />
+      <rect x="220" y="216" width="72" height="200" rx="20" fill="#DDBB79" />
+      <rect x="320" y="144" width="72" height="272" rx="20" fill="#5B7553" />
+      <path d="M337 258 L358 280 L400 232" stroke="#F4F2EC" strokeWidth="18" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
 export default function RuangWorkspace() {
   // ---- Portal / auth state ----
   const [authReady, setAuthReady] = useState(false);
@@ -986,8 +998,8 @@ function AuthScreen({ mode, username, password, error, submitting, setUsername, 
       <style>{RESPONSIVE_CSS}</style>
       <div style={styles.authCard}>
         <div style={styles.authBrand}>
-          <span style={styles.brandMark}>擦</span>
-          <span style={styles.authBrandName}>Ruang</span>
+          <LogoMark size={30} />
+          <span style={styles.authBrandName}>Kanban YISS</span>
         </div>
         <div style={styles.authSubtitle}>Portal Kerja Tim</div>
 
@@ -1051,8 +1063,8 @@ function Sidebar({
     <aside className={`rw-sidebar ${sidebarOpen ? "open" : ""}`} style={styles.sidebar}>
       <div style={styles.brandRow}>
         <div style={styles.brand}>
-          <span style={styles.brandMark}>擦</span>
-          <span style={styles.brandName}>Ruang</span>
+          <LogoMark size={22} />
+          <span style={styles.brandName}>Kanban YISS</span>
         </div>
         <button style={styles.sidebarCloseBtn} onClick={onClose} aria-label="Tutup menu">
           <X size={20} />
@@ -1388,7 +1400,7 @@ const styles = {
   authWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#1B2430", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
   authCard: { width: "100%", maxWidth: 340, background: "#232D3B", borderRadius: 14, padding: 28, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" },
   authBrand: { display: "flex", alignItems: "baseline", gap: 8, justifyContent: "center" },
-  authBrandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 700, color: "#fff" },
+  authBrandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "#fff" },
   authSubtitle: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", color: "#9CA0A8", marginBottom: 6 },
   authHint: { fontSize: 12, lineHeight: 1.5, color: "#B7B5AD", background: "rgba(196,138,46,0.12)", border: "1px solid rgba(196,138,46,0.3)", borderRadius: 8, padding: "10px 12px" },
   authInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 7, padding: "10px 12px", color: "#fff", fontSize: 14, outline: "none" },
@@ -1399,7 +1411,7 @@ const styles = {
   brandRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   brand: { display: "flex", alignItems: "baseline", gap: 8, padding: "0 6px 6px 6px" },
   brandMark: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, color: "#C48A2E" },
-  brandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, fontWeight: 600, letterSpacing: 0.2 },
+  brandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16.5, fontWeight: 600, letterSpacing: 0.1 },
   sidebarCloseBtn: { display: "none", background: "transparent", border: "none", color: "#fff", cursor: "pointer", alignItems: "center" },
 
   userRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 8 },

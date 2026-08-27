@@ -1,4 +1,4 @@
-# Ruang — Portal Kerja Tim (versi Next.js + Vercel)
+# Kanban YISS — Portal Kerja Tim (versi Next.js + Vercel)
 
 Versi ini punya backend sungguhan: autentikasi dengan password yang di-hash,
 sesi login lewat cookie, dan data tersimpan di **Redis** (lewat integrasi
