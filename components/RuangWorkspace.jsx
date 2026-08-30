@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -43,6 +43,23 @@ const PERSONAL_INDEX_KEY = "ruang-personal-index";
 const SHARED_INDEX_KEY = "ruang-shared-index";
 const dataKey = (id) => `ruang-data-${id}`;
 const DEFAULT_MEMBERS = ["Rifan", "Mohammad"];
+const DEFAULT_CARD_TYPES = [
+  "Video Semenit",
+  "Kalam Ulama",
+  "Poster Dakwah",
+  "Video Dokumentasi/Konten",
+  "Poster Kajian/TA",
+  "Desain Cetak",
+  "Desain Poster Divisi",
+];
+
+function formatCreatedDate(ts) {
+  try {
+    return new Date(ts).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  } catch (e) {
+    return "";
+  }
+}
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -56,6 +73,7 @@ const emptyWorkspaceData = () => ({
   notes: {},
   noteOrder: [],
   members: [...DEFAULT_MEMBERS],
+  cardTypes: [...DEFAULT_CARD_TYPES],
   active: { type: "none" },
 });
 
@@ -75,8 +93,8 @@ const sampleWorkspaceData = () => {
           { id: col3, name: "Selesai", cardIds: [] },
         ],
         cards: {
-          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, assignee: "Rifan", checked: false },
-          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, assignee: "Mohammad", checked: false },
+          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: ["Rifan"], cardType: "Video Semenit", checked: false },
+          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: ["Mohammad", "Rifan"], cardType: "Poster Dakwah", checked: false },
         },
       },
     },
@@ -84,13 +102,27 @@ const sampleWorkspaceData = () => {
     notes: {},
     noteOrder: [],
     members: [...DEFAULT_MEMBERS],
+    cardTypes: [...DEFAULT_CARD_TYPES],
     active: { type: "board", id: boardId },
   };
 };
 
 function normalizeWsData(raw) {
   const base = raw ? raw : emptyWorkspaceData();
-  return { ...base, members: base.members && base.members.length ? base.members : [...DEFAULT_MEMBERS] };
+  const members = base.members && base.members.length ? base.members : [...DEFAULT_MEMBERS];
+  const cardTypes = base.cardTypes && base.cardTypes.length ? base.cardTypes : [...DEFAULT_CARD_TYPES];
+  const boards = { ...(base.boards || {}) };
+  Object.keys(boards).forEach((bid) => {
+    const board = boards[bid];
+    const cards = { ...board.cards };
+    Object.keys(cards).forEach((cid) => {
+      const card = cards[cid];
+      const involvedMembers = card.involvedMembers ? card.involvedMembers : card.assignee ? [card.assignee] : [];
+      cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "" };
+    });
+    boards[bid] = { ...board, cards };
+  });
+  return { ...base, members, cardTypes, boards };
 }
 
 function useDebouncedSave(key, value, shared, ready) {
@@ -165,11 +197,12 @@ function buildAndDownloadWorkbook(wsName, data) {
         const info = getDurationInfo(card);
         rows.push({
           Kolom: col.name,
+          "Jenis Kartu": card.cardType || "",
           Kartu: card.text,
-          "Ditugaskan ke": card.assignee || "",
+          "Anggota Terlibat": (card.involvedMembers || []).join(", "),
           "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
           Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : "",
-          "Dibuat pada": new Date(card.createdAt).toLocaleString("id-ID"),
+          "Dibuat pada": formatCreatedDate(card.createdAt),
         });
       });
     });
@@ -181,7 +214,7 @@ function buildAndDownloadWorkbook(wsName, data) {
     }
     usedNames.add(sheetName);
     const ws = XLSX.utils.json_to_sheet(
-      rows.length ? rows : [{ Kolom: "", Kartu: "(belum ada kartu)", "Ditugaskan ke": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
+      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Kartu: "(belum ada kartu)", "Anggota Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
     );
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
@@ -593,7 +626,8 @@ export default function RuangWorkspace() {
   const isAdmin = currentUser.role === "admin";
   const activeBoard = wsData.active.type === "board" ? wsData.boards[wsData.active.id] : null;
   const activeNote = wsData.active.type === "note" ? wsData.notes[wsData.active.id] : null;
-  const currentTitle = activeBoard ? activeBoard.name : activeNote ? activeNote.title || "Tanpa judul" : "Ruang";
+  const activeInsight = wsData.active.type === "insight";
+  const currentTitle = activeBoard ? activeBoard.name : activeNote ? activeNote.title || "Tanpa judul" : activeInsight ? "Insight" : "Kanban YISS";
   const { overdue, dueSoon } = collectUrgentCards(wsData);
   const urgentCount = overdue.length + dueSoon.length;
 
@@ -613,6 +647,12 @@ export default function RuangWorkspace() {
 
   const requestDeleteMember = (name) => {
     requestConfirm(`Hapus anggota "${name}" dari daftar?`, () => performDeleteMember(name));
+  };
+
+  const addCardType = (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setWsData((d) => (d.cardTypes.includes(trimmed) ? d : { ...d, cardTypes: [...d.cardTypes, trimmed] }));
   };
 
   // ---- Board actions ----
@@ -692,7 +732,7 @@ export default function RuangWorkspace() {
     });
   };
 
-  const addCard = (boardId, colId, text, duration, assignee) => {
+  const addCard = (boardId, colId, text, duration, involvedMembers, cardType) => {
     if (!text.trim()) return;
     setWsData((d) => {
       const board = d.boards[boardId];
@@ -703,7 +743,10 @@ export default function RuangWorkspace() {
           ...d.boards,
           [boardId]: {
             ...board,
-            cards: { ...board.cards, [id]: { id, text, createdAt: Date.now(), duration: duration || null, assignee: assignee || "", checked: false } },
+            cards: {
+              ...board.cards,
+              [id]: { id, text, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", checked: false },
+            },
             columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: [...c.cardIds, id] } : c)),
           },
         },
@@ -864,6 +907,10 @@ export default function RuangWorkspace() {
           setActive({ type: "note", id });
           closeSidebar();
         }}
+        onSelectInsight={() => {
+          setActive({ type: "insight" });
+          closeSidebar();
+        }}
         onAddBoard={addBoard}
         onAddNote={addNote}
         onDeleteBoard={deleteBoard}
@@ -877,6 +924,8 @@ export default function RuangWorkspace() {
           <BoardView
             board={activeBoard}
             members={wsData.members}
+            cardTypes={wsData.cardTypes}
+            onAddCardType={addCardType}
             isAdmin={isAdmin}
             onRename={renameBoard}
             onAddColumn={addColumn}
@@ -893,7 +942,8 @@ export default function RuangWorkspace() {
           />
         )}
         {activeNote && <NoteView note={activeNote} onUpdate={updateNote} />}
-        {!activeBoard && !activeNote && (
+        {activeInsight && <InsightView wsData={wsData} />}
+        {!activeBoard && !activeNote && !activeInsight && (
           <div style={styles.empty}>
             <div style={styles.emptyTitle}>Belum ada yang dipilih</div>
             <div style={styles.emptyText}>Buat papan untuk melacak pekerjaan, atau catatan untuk menulis ide.</div>
@@ -1054,6 +1104,7 @@ function Sidebar({
   wsData,
   onSelectBoard,
   onSelectNote,
+  onSelectInsight,
   onAddBoard,
   onAddNote,
   onDeleteBoard,
@@ -1190,6 +1241,16 @@ function Sidebar({
 
       <div style={styles.divider} />
 
+      <div
+        style={{ ...styles.insightNavItem, ...(wsData.active.type === "insight" ? styles.insightNavItemActive : {}) }}
+        onClick={onSelectInsight}
+      >
+        <PieChart size={15} />
+        <span>Insight</span>
+      </div>
+
+      <div style={styles.divider} />
+
       <div style={styles.tabGroup}>
         <div style={{ ...styles.tab, ...styles.tabGold }}>
           <span>Papan</span>
@@ -1253,18 +1314,39 @@ function Sidebar({
   );
 }
 
-function BoardView({ board, members, isAdmin, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
+function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
+  const [showAddType, setShowAddType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
 
-  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", assignee: "" };
+  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
+
+  const toggleDraftMember = (colId, name) => {
+    const dr = draft(colId);
+    const has = dr.involvedMembers.includes(name);
+    setDraft(colId, { involvedMembers: has ? dr.involvedMembers.filter((m) => m !== name) : [...dr.involvedMembers, name] });
+  };
 
   const submit = (colId) => {
     const dr = draft(colId);
     const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : null;
-    onAddCard(board.id, colId, dr.text, duration, dr.assignee);
-    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: dr.unit, assignee: "" } }));
+    onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType);
+    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: dr.unit, involvedMembers: [], cardType: "" } }));
+  };
+
+  const submitNewType = () => {
+    const name = newTypeName.trim();
+    if (!name) return;
+    onAddCardType(name);
+    setNewTypeName("");
+    setShowAddType(false);
+  };
+
+  const toggleCardMember = (boardId, cid, currentList, name) => {
+    const has = currentList.includes(name);
+    onUpdateCard(boardId, cid, { involvedMembers: has ? currentList.filter((m) => m !== name) : [...currentList, name] });
   };
 
   return (
@@ -1307,6 +1389,7 @@ function BoardView({ board, members, isAdmin, onRename, onAddColumn, onRenameCol
                 const card = board.cards[cid];
                 if (!card) return null;
                 const info = getDurationInfo(card);
+                const involved = card.involvedMembers || [];
                 return (
                   <div key={cid} draggable onDragStart={() => setDragCard({ cardId: cid, colId: col.id })} onDragEnd={() => setDragCard(null)} style={styles.card}>
                     <div style={styles.cardTop}>
@@ -1323,18 +1406,47 @@ function BoardView({ board, members, isAdmin, onRename, onAddColumn, onRenameCol
                         <X size={14} />
                       </button>
                     </div>
+
+                    <div style={styles.createdDateLabel}>
+                      <Calendar size={11} />
+                      <span>{formatCreatedDate(card.createdAt)}</span>
+                    </div>
+
+                    <select style={styles.typeSelect} value={card.cardType || ""} onChange={(e) => onUpdateCard(board.id, cid, { cardType: e.target.value })}>
+                      <option value="">Pilih jenis kartu…</option>
+                      {cardTypes.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div style={styles.involvedLabel}>Anggota terlibat</div>
                     {isAdmin ? (
-                      <select style={styles.assigneeSelect} value={card.assignee || ""} onChange={(e) => onUpdateCard(board.id, cid, { assignee: e.target.value })}>
-                        <option value="">Belum ditugaskan</option>
-                        {members.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
+                      <div style={styles.chipRow}>
+                        {members.map((m) => {
+                          const active = involved.includes(m);
+                          return (
+                            <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleCardMember(board.id, cid, involved, m)}>
+                              {m}
+                            </button>
+                          );
+                        })}
+                      </div>
                     ) : (
-                      <div style={styles.assigneeReadonly}>{card.assignee || "Belum ditugaskan"}</div>
+                      <div style={styles.chipRow}>
+                        {involved.length ? (
+                          involved.map((m) => (
+                            <span key={m} style={{ ...styles.chip, ...styles.chipActive, cursor: "default" }}>
+                              {m}
+                            </span>
+                          ))
+                        ) : (
+                          <span style={styles.assigneeReadonly}>Belum ada yang terlibat</span>
+                        )}
+                      </div>
                     )}
+
                     {info && <span style={{ ...styles.durationPill, ...(info.status === "overdue" ? styles.durationOverdue : {}), ...(info.status === "due_soon" ? styles.durationDueSoon : {}) }}>⏱ {info.text}</span>}
                   </div>
                 );
@@ -1344,18 +1456,55 @@ function BoardView({ board, members, isAdmin, onRename, onAddColumn, onRenameCol
             {colIndex === 0 && (
               <div style={styles.addCardRow}>
                 <input style={styles.addCardInput} placeholder="Tambah kartu…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
-                {isAdmin ? (
-                  <select style={styles.assigneeSelect} value={draft(col.id).assignee} onChange={(e) => setDraft(col.id, { assignee: e.target.value })}>
-                    <option value="">Belum ditugaskan</option>
-                    {members.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
+
+                <div>
+                  <select style={styles.typeSelect} value={draft(col.id).cardType} onChange={(e) => setDraft(col.id, { cardType: e.target.value })}>
+                    <option value="">Pilih jenis kartu…</option>
+                    {cardTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
                       </option>
                     ))}
                   </select>
+                  {!showAddType ? (
+                    <button style={styles.addTypeToggleBtn} onClick={() => setShowAddType(true)} title="Tambah pilihan jenis kartu">
+                      <Plus size={12} /> Jenis baru
+                    </button>
+                  ) : (
+                    <div style={styles.addTypeRow}>
+                      <input
+                        style={styles.addTypeInput}
+                        placeholder="Nama jenis baru…"
+                        value={newTypeName}
+                        onChange={(e) => setNewTypeName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && submitNewType()}
+                        autoFocus
+                      />
+                      <button style={styles.addTypeConfirmBtn} onClick={submitNewType}>
+                        Tambah
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isAdmin ? (
+                  <div>
+                    <div style={styles.involvedLabel}>Anggota terlibat</div>
+                    <div style={styles.chipRow}>
+                      {members.map((m) => {
+                        const active = draft(col.id).involvedMembers.includes(m);
+                        return (
+                          <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(col.id, m)}>
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : (
-                  <div style={styles.assigneeReadonlyHint}>Penugasan pelaksana hanya bisa diatur oleh admin</div>
+                  <div style={styles.assigneeReadonlyHint}>Penugasan anggota hanya bisa diatur oleh admin</div>
                 )}
+
                 <div className="rw-duration-row" style={styles.durationRow}>
                   <input style={styles.durationInput} type="number" min="1" placeholder="Durasi" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
                   <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
@@ -1385,6 +1534,62 @@ function NoteView({ note, onUpdate }) {
       <input style={styles.noteTitle} value={note.title} onChange={(e) => onUpdate(note.id, { title: e.target.value })} placeholder="Judul catatan" />
       <div style={styles.noteMeta}>Diperbarui {new Date(note.updatedAt).toLocaleString("id-ID")}</div>
       <textarea style={styles.noteBody} value={note.content} onChange={(e) => onUpdate(note.id, { content: e.target.value })} placeholder="Mulai menulis di sini…" />
+    </div>
+  );
+}
+
+function InsightView({ wsData }) {
+  let done = 0;
+  let inProgress = 0;
+  wsData.boardOrder.forEach((bid) => {
+    const board = wsData.boards[bid];
+    if (!board) return;
+    if (board.columns[1]) inProgress += board.columns[1].cardIds.length;
+    if (board.columns[2]) done += board.columns[2].cardIds.length;
+  });
+  const total = done + inProgress;
+  const donePct = total ? Math.round((done / total) * 100) : 0;
+  const inProgressPct = total ? 100 - donePct : 0;
+
+  return (
+    <div style={styles.insightWrap}>
+      <h2 style={styles.insightTitle}>Insight</h2>
+      <div style={styles.insightSubtitle}>Perbandingan pekerjaan sedang dikerjakan dan yang sudah selesai, dari seluruh papan di ruang ini.</div>
+
+      {total === 0 ? (
+        <div style={styles.insightEmpty}>Belum ada pekerjaan yang sedang dikerjakan atau selesai.</div>
+      ) : (
+        <div style={styles.insightBody}>
+          <div
+            style={{
+              ...styles.donutOuter,
+              background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
+            }}
+          >
+            <div style={styles.donutInner}>
+              <div style={styles.donutTotal}>{total}</div>
+              <div style={styles.donutTotalLabel}>Total kartu</div>
+            </div>
+          </div>
+
+          <div style={styles.insightStats}>
+            <div style={styles.statCard}>
+              <div style={{ ...styles.statDot, background: "#5B7553" }} />
+              <div>
+                <div style={styles.statNumber}>{done}</div>
+                <div style={styles.statLabel}>Selesai ({donePct}%)</div>
+              </div>
+            </div>
+            <div style={styles.statCard}>
+              <div style={{ ...styles.statDot, background: "#C48A2E" }} />
+              <div>
+                <div style={styles.statNumber}>{inProgress}</div>
+                <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1437,6 +1642,8 @@ const styles = {
   modeHint: { fontSize: 10.5, color: "#9CA0A8", lineHeight: 1.4 },
   createWsBtn: { background: "#5B7553", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
   divider: { height: 1, background: "rgba(255,255,255,0.08)", margin: "2px 0" },
+  insightNavItem: { display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 6, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
+  insightNavItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff" },
   tabGroup: { display: "flex", flexDirection: "column", gap: 6 },
   tab: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", padding: "6px 10px", borderRadius: "6px 6px 0 0", fontWeight: 500 },
   tabGold: { background: "rgba(196,138,46,0.18)", color: "#E3B570" },
@@ -1470,9 +1677,18 @@ const styles = {
   cardText: { fontSize: 13.5, lineHeight: 1.4, color: "#23262B" },
   cardTextDone: { textDecoration: "line-through", color: "#A8A59B" },
   cardDelete: { background: "transparent", border: "none", color: "#C4C1B6", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
-  assigneeSelect: { border: "1px solid #E4E1D7", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "#6B6E76", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", width: "100%", boxSizing: "border-box" },
+  typeSelect: { border: "1px solid #E4E1D7", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "#6B6E76", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", width: "100%", boxSizing: "border-box" },
   assigneeReadonly: { fontSize: 11.5, color: "#6B6E76", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "#A8A59B", fontStyle: "italic", lineHeight: 1.4 },
+  createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#A8A59B" },
+  involvedLabel: { fontSize: 10.5, color: "#8B8D93", marginTop: 2 },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: 5 },
+  chip: { border: "1px solid #E4E1D7", background: "#fff", color: "#6B6E76", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
+  chipActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
+  addTypeToggleBtn: { display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "none", color: "#8B8D93", fontSize: 10.5, cursor: "pointer", padding: "3px 0" },
+  addTypeRow: { display: "flex", gap: 6, marginTop: 3 },
+  addTypeInput: { flex: 1, border: "1px dashed #D4D0C3", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
+  addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#5B7553", color: "#fff", fontSize: 11.5, padding: "0 10px", cursor: "pointer" },
   durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "#EFEDE6", color: "#6B6E76" },
   durationOverdue: { background: "#FBE7E4", color: "#B4402C" },
   durationDueSoon: { background: "#FCF0DA", color: "#9A6A15" },
@@ -1487,6 +1703,21 @@ const styles = {
   noteTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "#23262B" },
   noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "#A8A59B", marginBottom: 10 },
   noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "#23262B", fontFamily: "'Inter', system-ui, sans-serif" },
+
+  insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 640 },
+  insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "#23262B", margin: 0 },
+  insightSubtitle: { fontSize: 13.5, color: "#6B6E76", lineHeight: 1.5, marginBottom: 14 },
+  insightEmpty: { fontSize: 14, color: "#8B8D93", fontStyle: "italic", padding: "24px 0" },
+  insightBody: { display: "flex", alignItems: "center", gap: 40, flexWrap: "wrap" },
+  donutOuter: { width: 220, height: 220, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  donutInner: { width: 150, height: 150, borderRadius: "50%", background: "#EFEDE6", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.03)" },
+  donutTotal: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 700, color: "#23262B" },
+  donutTotalLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "#8B8D93", marginTop: 2 },
+  insightStats: { display: "flex", flexDirection: "column", gap: 14 },
+  statCard: { display: "flex", alignItems: "center", gap: 12, background: "#F7F5F0", border: "1px solid #E4E1D7", borderRadius: 10, padding: "12px 18px", minWidth: 220 },
+  statDot: { width: 14, height: 14, borderRadius: "50%", flexShrink: 0 },
+  statNumber: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "#23262B", lineHeight: 1.1 },
+  statLabel: { fontSize: 12.5, color: "#6B6E76", marginTop: 2 },
 
   fab: { position: "fixed", bottom: 22, right: 22, width: 52, height: 52, borderRadius: "50%", background: "#C48A2E", color: "#fff", border: "none", boxShadow: "0 4px 14px rgba(196,138,46,0.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 40 },
   memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "#1B2430", color: "#E7E5DE", borderRadius: 10, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
