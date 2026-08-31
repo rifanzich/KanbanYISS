@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -141,18 +141,25 @@ function useDebouncedSave(key, value, shared, ready) {
   }, [key, value, shared, ready]);
 }
 
+function formatHoursMinutes(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} menit`;
+  if (minutes === 0) return `${hours} jam`;
+  return `${hours} jam ${minutes} menit`;
+}
+
 function getDurationInfo(card) {
   if (!card.duration) return null;
   const { amount, unit } = card.duration;
   const due = card.createdAt + amount * UNIT_MS[unit];
   const remaining = due - Date.now();
   const label = `${amount} ${UNIT_LABEL[unit]}`;
-  if (remaining <= 0) return { text: `Terlambat · target ${label}`, status: "overdue" };
-  const abs = Math.abs(remaining);
-  let remText;
-  if (abs >= UNIT_MS.hari) remText = `${Math.ceil(abs / UNIT_MS.hari)} hari lagi`;
-  else if (abs >= UNIT_MS.jam) remText = `${Math.ceil(abs / UNIT_MS.jam)} jam lagi`;
-  else remText = `${Math.ceil(abs / UNIT_MS.menit)} menit lagi`;
+  if (remaining <= 0) {
+    return { text: `Terlambat ${formatHoursMinutes(Math.abs(remaining))} · target ${label}`, status: "overdue" };
+  }
+  const remText = `${formatHoursMinutes(remaining)} lagi`;
   const status = remaining <= DUE_SOON_MS ? "due_soon" : "ok";
   return { text: `${remText} · target ${label}`, status };
 }
@@ -234,6 +241,39 @@ function buildAndDownloadWorkbook(wsName, data) {
 }
 
 const RESPONSIVE_CSS = `
+.rw-app[data-theme="light"] {
+  --app-bg: linear-gradient(135deg, #EFEDE6 0%, #F3E8D6 45%, #E7ECE3 100%);
+  --sidebar-bg: rgba(27,36,48,0.72);
+  --sidebar-border: rgba(255,255,255,0.08);
+  --surface: rgba(255,255,255,0.5);
+  --surface-solid: #F7F5F0;
+  --surface-strong: rgba(255,255,255,0.72);
+  --card-border: rgba(228,225,215,0.9);
+  --text-primary: #23262B;
+  --text-muted: #6B6E76;
+  --text-faint: #A8A59B;
+  --modal-bg: rgba(255,255,255,0.8);
+  --modal-overlay: rgba(20,20,20,0.4);
+  --input-bg: rgba(255,255,255,0.55);
+  --input-border: #D4D0C3;
+}
+.rw-app[data-theme="dark"] {
+  --app-bg: linear-gradient(135deg, #11151c 0%, #171c25 50%, #12161d 100%);
+  --sidebar-bg: rgba(9,12,17,0.65);
+  --sidebar-border: rgba(255,255,255,0.06);
+  --surface: rgba(255,255,255,0.045);
+  --surface-solid: #1b2028;
+  --surface-strong: rgba(255,255,255,0.065);
+  --card-border: rgba(255,255,255,0.09);
+  --text-primary: #ECEAE3;
+  --text-muted: #9A9DA5;
+  --text-faint: #6E727C;
+  --modal-bg: rgba(22,26,33,0.82);
+  --modal-overlay: rgba(0,0,0,0.6);
+  --input-bg: rgba(255,255,255,0.06);
+  --input-border: rgba(255,255,255,0.16);
+}
+.rw-glass { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .rw-sidebar { position: relative; transform: none; z-index: 30; }
 .rw-topbar { display: none; }
 .rw-backdrop { display: none; }
@@ -300,9 +340,30 @@ export default function RuangWorkspace() {
   const [newMemberName, setNewMemberName] = useState("");
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [theme, setTheme] = useState("light");
   const [, forceTick] = useState(0);
 
   const requestConfirm = (message, onConfirm) => setConfirmDialog({ message, onConfirm });
+
+  // Load saved theme preference once logged in, and persist changes
+  useEffect(() => {
+    if (!currentUser) return;
+    (async () => {
+      try {
+        const res = await window.storage.get("ruang-theme-pref", false);
+        if (res && (res.value === "light" || res.value === "dark")) setTheme(res.value);
+      } catch (e) {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.username]);
+
+  const toggleTheme = () => {
+    setTheme((t) => {
+      const next = t === "light" ? "dark" : "light";
+      window.storage.set("ruang-theme-pref", next, false).catch(() => {});
+      return next;
+    });
+  };
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -368,6 +429,7 @@ export default function RuangWorkspace() {
     if (!activeWsId || !workspaces) return;
     const ws = workspaces.find((w) => w.id === activeWsId);
     if (!ws) return;
+    setWsData(null); // clear immediately so the debounced save below can't pair stale data with the new workspace's key
     (async () => {
       try {
         const res = await window.storage.get(dataKey(ws.id), ws.mode === "team");
@@ -853,7 +915,7 @@ export default function RuangWorkspace() {
   };
 
   return (
-    <div style={styles.app}>
+    <div className="rw-app" data-theme={theme} style={styles.app}>
       <style>{RESPONSIVE_CSS}</style>
 
       <div className="rw-topbar" style={styles.topbar}>
@@ -869,6 +931,8 @@ export default function RuangWorkspace() {
         onClose={closeSidebar}
         currentUser={currentUser}
         onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         isAdmin={isAdmin}
         accounts={accounts}
         showAccountPanel={showAccountPanel}
@@ -1075,6 +1139,8 @@ function Sidebar({
   onClose,
   currentUser,
   onLogout,
+  theme,
+  onToggleTheme,
   isAdmin,
   accounts,
   showAccountPanel,
@@ -1127,9 +1193,14 @@ function Sidebar({
           <span style={styles.userName}>{currentUser.username}</span>
           <span style={{ ...styles.userRoleBadge, ...(isAdmin ? styles.userRoleBadgeAdmin : {}) }}>{isAdmin ? "Admin" : "Anggota"}</span>
         </div>
-        <button style={styles.logoutBtn} onClick={onLogout} title="Keluar">
-          <LogOut size={15} />
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button style={styles.logoutBtn} onClick={onToggleTheme} title={theme === "light" ? "Mode gelap" : "Mode terang"}>
+            {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
+          </button>
+          <button style={styles.logoutBtn} onClick={onLogout} title="Keluar">
+            <LogOut size={15} />
+          </button>
+        </div>
       </div>
 
       {isAdmin && (
@@ -1314,11 +1385,74 @@ function Sidebar({
   );
 }
 
+function TypeSelect({ value, options, onChange, onAddOption }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+
+  const confirmAdd = () => {
+    const trimmed = name.trim();
+    if (trimmed) {
+      onAddOption(trimmed);
+      onChange(trimmed);
+    }
+    setName("");
+    setAdding(false);
+  };
+
+  if (adding) {
+    return (
+      <div style={styles.typeAddRow}>
+        <input
+          style={styles.addTypeInput}
+          placeholder="Nama jenis baru…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && confirmAdd()}
+          autoFocus
+        />
+        <button style={styles.addTypeConfirmBtn} onClick={confirmAdd} title="Tambahkan">
+          <Check size={13} />
+        </button>
+        <button
+          style={styles.addTypeCancelBtn}
+          onClick={() => {
+            setName("");
+            setAdding(false);
+          }}
+          title="Batal"
+        >
+          <X size={13} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      style={styles.typeSelect}
+      value={value || ""}
+      onChange={(e) => {
+        if (e.target.value === "__add_new__") {
+          setAdding(true);
+          return;
+        }
+        onChange(e.target.value);
+      }}
+    >
+      <option value="">Pilih jenis kartu…</option>
+      {options.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+      <option value="__add_new__">+ Tambah jenis baru…</option>
+    </select>
+  );
+}
+
 function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
-  const [showAddType, setShowAddType] = useState(false);
-  const [newTypeName, setNewTypeName] = useState("");
 
   const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
@@ -1331,17 +1465,11 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
 
   const submit = (colId) => {
     const dr = draft(colId);
-    const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : null;
+    if (!dr.text.trim()) return;
+    // Default duration is 1 day when the person doesn't set one explicitly.
+    const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : { amount: 1, unit: "hari" };
     onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType);
-    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: dr.unit, involvedMembers: [], cardType: "" } }));
-  };
-
-  const submitNewType = () => {
-    const name = newTypeName.trim();
-    if (!name) return;
-    onAddCardType(name);
-    setNewTypeName("");
-    setShowAddType(false);
+    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" } }));
   };
 
   const toggleCardMember = (boardId, cid, currentList, name) => {
@@ -1412,14 +1540,12 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                       <span>{formatCreatedDate(card.createdAt)}</span>
                     </div>
 
-                    <select style={styles.typeSelect} value={card.cardType || ""} onChange={(e) => onUpdateCard(board.id, cid, { cardType: e.target.value })}>
-                      <option value="">Pilih jenis kartu…</option>
-                      {cardTypes.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
+                    <TypeSelect
+                      value={card.cardType}
+                      options={cardTypes}
+                      onChange={(v) => onUpdateCard(board.id, cid, { cardType: v })}
+                      onAddOption={onAddCardType}
+                    />
 
                     <div style={styles.involvedLabel}>Anggota terlibat</div>
                     {isAdmin ? (
@@ -1455,37 +1581,14 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
 
             {colIndex === 0 && (
               <div style={styles.addCardRow}>
-                <input style={styles.addCardInput} placeholder="Tambah kartu…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
+                <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
 
-                <div>
-                  <select style={styles.typeSelect} value={draft(col.id).cardType} onChange={(e) => setDraft(col.id, { cardType: e.target.value })}>
-                    <option value="">Pilih jenis kartu…</option>
-                    {cardTypes.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                  {!showAddType ? (
-                    <button style={styles.addTypeToggleBtn} onClick={() => setShowAddType(true)} title="Tambah pilihan jenis kartu">
-                      <Plus size={12} /> Jenis baru
-                    </button>
-                  ) : (
-                    <div style={styles.addTypeRow}>
-                      <input
-                        style={styles.addTypeInput}
-                        placeholder="Nama jenis baru…"
-                        value={newTypeName}
-                        onChange={(e) => setNewTypeName(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && submitNewType()}
-                        autoFocus
-                      />
-                      <button style={styles.addTypeConfirmBtn} onClick={submitNewType}>
-                        Tambah
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <TypeSelect
+                  value={draft(col.id).cardType}
+                  options={cardTypes}
+                  onChange={(v) => setDraft(col.id, { cardType: v })}
+                  onAddOption={onAddCardType}
+                />
 
                 {isAdmin ? (
                   <div>
@@ -1506,14 +1609,15 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                 )}
 
                 <div className="rw-duration-row" style={styles.durationRow}>
-                  <input style={styles.durationInput} type="number" min="1" placeholder="Durasi" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
+                  <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
                   <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
                     <option value="menit">Menit</option>
                     <option value="jam">Jam</option>
                     <option value="hari">Hari</option>
                   </select>
-                  <button style={styles.durationAddBtn} onClick={() => submit(col.id)}>
-                    Tambah
+                  <span style={styles.durationHint}>kosongkan = 1 hari</span>
+                  <button style={styles.submitCardBtn} onClick={() => submit(col.id)} title="Tambahkan kartu" aria-label="Tambahkan kartu">
+                    <Plus size={16} />
                   </button>
                 </div>
               </div>
@@ -1541,15 +1645,30 @@ function NoteView({ note, onUpdate }) {
 function InsightView({ wsData }) {
   let done = 0;
   let inProgress = 0;
+  let todo = 0;
   wsData.boardOrder.forEach((bid) => {
     const board = wsData.boards[bid];
     if (!board) return;
+    if (board.columns[0]) todo += board.columns[0].cardIds.length;
     if (board.columns[1]) inProgress += board.columns[1].cardIds.length;
     if (board.columns[2]) done += board.columns[2].cardIds.length;
   });
   const total = done + inProgress;
   const donePct = total ? Math.round((done / total) * 100) : 0;
   const inProgressPct = total ? 100 - donePct : 0;
+  const boardCount = wsData.boardOrder.length;
+
+  const summaryText = (() => {
+    if (total === 0 && todo === 0) return null;
+    if (total === 0) {
+      return `Ada ${todo} pekerjaan yang belum mulai dikerjakan di ${boardCount} papan. Belum ada yang berjalan atau selesai.`;
+    }
+    let mood;
+    if (donePct >= 75) mood = "Capaian kerja sangat baik — sebagian besar pekerjaan sudah tuntas.";
+    else if (donePct >= 40) mood = "Progres berjalan cukup seimbang antara yang selesai dan yang masih berjalan.";
+    else mood = "Sebagian besar pekerjaan masih dalam proses pengerjaan.";
+    return `Dari total ${total} pekerjaan di ${boardCount} papan, tim telah menyelesaikan ${done} pekerjaan (${donePct}%), sementara ${inProgress} pekerjaan (${inProgressPct}%) masih dalam pengerjaan.${todo ? ` Ada juga ${todo} pekerjaan lain yang belum dimulai.` : ""} ${mood}`;
+  })();
 
   return (
     <div style={styles.insightWrap}>
@@ -1557,53 +1676,60 @@ function InsightView({ wsData }) {
       <div style={styles.insightSubtitle}>Perbandingan pekerjaan sedang dikerjakan dan yang sudah selesai, dari seluruh papan di ruang ini.</div>
 
       {total === 0 ? (
-        <div style={styles.insightEmpty}>Belum ada pekerjaan yang sedang dikerjakan atau selesai.</div>
+        <div style={styles.insightEmpty}>{summaryText || "Belum ada pekerjaan yang sedang dikerjakan atau selesai."}</div>
       ) : (
-        <div style={styles.insightBody}>
-          <div
-            style={{
-              ...styles.donutOuter,
-              background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
-            }}
-          >
-            <div style={styles.donutInner}>
-              <div style={styles.donutTotal}>{total}</div>
-              <div style={styles.donutTotalLabel}>Total kartu</div>
+        <>
+          <div style={styles.insightBody}>
+            <div
+              style={{
+                ...styles.donutOuter,
+                background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
+              }}
+            >
+              <div style={styles.donutInner}>
+                <div style={styles.donutTotal}>{total}</div>
+                <div style={styles.donutTotalLabel}>Total kartu</div>
+              </div>
+            </div>
+
+            <div style={styles.insightStats}>
+              <div style={styles.statCard}>
+                <div style={{ ...styles.statDot, background: "#5B7553" }} />
+                <div>
+                  <div style={styles.statNumber}>{done}</div>
+                  <div style={styles.statLabel}>Selesai ({donePct}%)</div>
+                </div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={{ ...styles.statDot, background: "#C48A2E" }} />
+                <div>
+                  <div style={styles.statNumber}>{inProgress}</div>
+                  <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div style={styles.insightStats}>
-            <div style={styles.statCard}>
-              <div style={{ ...styles.statDot, background: "#5B7553" }} />
-              <div>
-                <div style={styles.statNumber}>{done}</div>
-                <div style={styles.statLabel}>Selesai ({donePct}%)</div>
-              </div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={{ ...styles.statDot, background: "#C48A2E" }} />
-              <div>
-                <div style={styles.statNumber}>{inProgress}</div>
-                <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
-              </div>
-            </div>
+          <div style={styles.insightSummaryCard}>
+            <div style={styles.insightSummaryLabel}>Resume Capaian Kerja</div>
+            <div style={styles.insightSummaryText}>{summaryText}</div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
 }
 
 const styles = {
-  app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "#EFEDE6", color: "#23262B", position: "relative" },
+  app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "var(--app-bg)", color: "var(--text-primary)", position: "relative" },
   topbar: { position: "fixed", top: 0, left: 0, right: 0, height: 56, background: "#1B2430", color: "#fff", alignItems: "center", gap: 12, padding: "0 14px", zIndex: 10 },
   hamburgerBtn: { background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", padding: 4 },
   topbarTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  loadingWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#EFEDE6", fontFamily: "'Inter', system-ui, sans-serif", color: "#8B8D93" },
+  loadingWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--app-bg)", fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-faint)" },
   loadingText: { fontSize: 14 },
 
-  authWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#1B2430", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
-  authCard: { width: "100%", maxWidth: 340, background: "#232D3B", borderRadius: 14, padding: 28, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" },
+  authWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "linear-gradient(135deg, #1B2430 0%, #2A3B2E 55%, #3A2C18 100%)", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
+  authCard: { width: "100%", maxWidth: 340, background: "rgba(35,45,59,0.55)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 28, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" },
   authBrand: { display: "flex", alignItems: "baseline", gap: 8, justifyContent: "center" },
   authBrandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "#fff" },
   authSubtitle: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", color: "#9CA0A8", marginBottom: 6 },
@@ -1612,7 +1738,7 @@ const styles = {
   authError: { color: "#E38585", fontSize: 12.5 },
   authSubmitBtn: { background: "#C48A2E", color: "#1B2430", border: "none", borderRadius: 7, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
 
-  sidebar: { width: 250, minWidth: 250, background: "#1B2430", color: "#E7E5DE", display: "flex", flexDirection: "column", padding: "20px 14px", gap: 16, overflowY: "auto" },
+  sidebar: { width: 250, minWidth: 250, background: "var(--sidebar-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", borderRight: "1px solid var(--sidebar-border)", color: "#E7E5DE", display: "flex", flexDirection: "column", padding: "20px 14px", gap: 16, overflowY: "auto" },
   brandRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   brand: { display: "flex", alignItems: "baseline", gap: 8, padding: "0 6px 6px 6px" },
   brandMark: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, color: "#C48A2E" },
@@ -1655,96 +1781,101 @@ const styles = {
   listItemActiveMoss: { background: "rgba(91,117,83,0.32)", color: "#fff" },
   listItemText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 },
   listItemDelete: { background: "transparent", border: "none", color: "inherit", opacity: 0.7, cursor: "pointer", padding: "0 2px", flexShrink: 0, display: "flex", alignItems: "center" },
-  listEmpty: { fontSize: 12, color: "#6B6E76", padding: "6px 10px", fontStyle: "italic" },
+  listEmpty: { fontSize: 12, color: "var(--text-muted)", padding: "6px 10px", fontStyle: "italic" },
   main: { flex: 1, overflow: "auto", padding: "28px 32px" },
   teamBanner: { fontSize: 12, color: "#8A6A28", background: "rgba(196,138,46,0.12)", border: "1px solid rgba(196,138,46,0.3)", borderRadius: 6, padding: "8px 12px", marginBottom: 18, display: "inline-block" },
-  empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "#8B8D93", textAlign: "center" },
-  emptyTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "#23262B" },
+  empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "var(--text-faint)", textAlign: "center" },
+  emptyTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "var(--text-primary)" },
   emptyText: { fontSize: 14, maxWidth: 340 },
   boardWrap: { display: "flex", flexDirection: "column", gap: 20, height: "100%" },
-  boardTitle: { fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "#23262B", padding: "2px 0", width: "100%", boxSizing: "border-box" },
+  boardTitle: { fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", padding: "2px 0", width: "100%", boxSizing: "border-box" },
   columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", paddingBottom: 20, flex: 1 },
-  column: { background: "#F7F5F0", borderTop: "3px solid #C48A2E", borderRadius: "4px 4px 8px 8px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 1px 2px rgba(0,0,0,0.05)", flexShrink: 0 },
+  column: { background: "var(--surface)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", border: "1px solid var(--card-border)", borderTop: "3px solid #C48A2E", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0 },
   columnDragOver: { boxShadow: "0 0 0 2px #C48A2E inset" },
   columnHead: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  columnTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", border: "none", background: "transparent", outline: "none", color: "#6B6E76", width: "85%" },
-  columnDelete: { background: "transparent", border: "none", color: "#B0AEA5", cursor: "pointer", display: "flex", alignItems: "center" },
+  columnTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", border: "none", background: "transparent", outline: "none", color: "var(--text-muted)", width: "85%" },
+  columnDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
   cardStack: { display: "flex", flexDirection: "column", gap: 8 },
-  card: { background: "#fff", borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 1px 3px rgba(35,38,43,0.08)", cursor: "grab", border: "1px solid #E4E1D7" },
+  card: { background: "var(--surface-strong)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)" },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 },
   checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1 },
   checkbox: { marginTop: 3, cursor: "pointer", flexShrink: 0 },
-  cardText: { fontSize: 13.5, lineHeight: 1.4, color: "#23262B" },
-  cardTextDone: { textDecoration: "line-through", color: "#A8A59B" },
-  cardDelete: { background: "transparent", border: "none", color: "#C4C1B6", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
-  typeSelect: { border: "1px solid #E4E1D7", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "#6B6E76", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", width: "100%", boxSizing: "border-box" },
-  assigneeReadonly: { fontSize: 11.5, color: "#6B6E76", padding: "4px 2px", fontStyle: "italic" },
-  assigneeReadonlyHint: { fontSize: 10.5, color: "#A8A59B", fontStyle: "italic", lineHeight: 1.4 },
-  createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#A8A59B" },
-  involvedLabel: { fontSize: 10.5, color: "#8B8D93", marginTop: 2 },
+  cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700 },
+  cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
+  cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", width: "100%", boxSizing: "border-box" },
+  assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
+  assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
+  createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-faint)" },
+  involvedLabel: { fontSize: 10.5, color: "var(--text-faint)", marginTop: 2 },
   chipRow: { display: "flex", flexWrap: "wrap", gap: 5 },
-  chip: { border: "1px solid #E4E1D7", background: "#fff", color: "#6B6E76", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
+  chip: { border: "1px solid var(--card-border)", background: "var(--surface-strong)", color: "var(--text-muted)", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
   chipActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
-  addTypeToggleBtn: { display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "none", color: "#8B8D93", fontSize: 10.5, cursor: "pointer", padding: "3px 0" },
-  addTypeRow: { display: "flex", gap: 6, marginTop: 3 },
-  addTypeInput: { flex: 1, border: "1px dashed #D4D0C3", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
-  addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#5B7553", color: "#fff", fontSize: 11.5, padding: "0 10px", cursor: "pointer" },
-  durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "#EFEDE6", color: "#6B6E76" },
+  typeAddRow: { display: "flex", gap: 6 },
+  addTypeInput: { flex: 1, border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
+  addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#5B7553", color: "#fff", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
+  addTypeCancelBtn: { border: "1px solid var(--input-border)", borderRadius: 6, background: "transparent", color: "var(--text-faint)", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
+  durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "var(--surface-solid)", color: "var(--text-muted)" },
   durationOverdue: { background: "#FBE7E4", color: "#B4402C" },
   durationDueSoon: { background: "#FCF0DA", color: "#9A6A15" },
   addCardRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
-  addCardInput: { width: "100%", border: "1px dashed #D4D0C3", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box" },
+  addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box" },
   durationRow: { display: "flex", gap: 6 },
-  durationInput: { width: 60, border: "1px solid #D4D0C3", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
-  durationSelect: { border: "1px solid #D4D0C3", borderRadius: 6, padding: "6px 4px", fontSize: 12, outline: "none", background: "#fff", color: "#23262B" },
+  durationInput: { width: 60, border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
+  durationSelect: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 4px", fontSize: 12, outline: "none", background: "var(--input-bg)", color: "var(--text-primary)" },
   durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
-  addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "#8B8D93", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
+  durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
+  submitCardBtn: { border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
+  addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "var(--text-faint)", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
   noteWrap: { display: "flex", flexDirection: "column", gap: 6, height: "100%", maxWidth: 720 },
-  noteTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "#23262B" },
-  noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "#A8A59B", marginBottom: 10 },
-  noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "#23262B", fontFamily: "'Inter', system-ui, sans-serif" },
+  noteTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)" },
+  noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "var(--text-faint)", marginBottom: 10 },
+  noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" },
 
   insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 640 },
-  insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "#23262B", margin: 0 },
-  insightSubtitle: { fontSize: 13.5, color: "#6B6E76", lineHeight: 1.5, marginBottom: 14 },
-  insightEmpty: { fontSize: 14, color: "#8B8D93", fontStyle: "italic", padding: "24px 0" },
+  insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
+  insightSubtitle: { fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 14 },
+  insightEmpty: { fontSize: 14, color: "var(--text-faint)", fontStyle: "italic", padding: "24px 0" },
   insightBody: { display: "flex", alignItems: "center", gap: 40, flexWrap: "wrap" },
   donutOuter: { width: 220, height: 220, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  donutInner: { width: 150, height: 150, borderRadius: "50%", background: "#EFEDE6", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.03)" },
-  donutTotal: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 700, color: "#23262B" },
-  donutTotalLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "#8B8D93", marginTop: 2 },
+  donutInner: { width: 150, height: 150, borderRadius: "50%", background: "var(--surface-solid)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.03)" },
+  donutTotal: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 700, color: "var(--text-primary)" },
+  donutTotalLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", marginTop: 2 },
   insightStats: { display: "flex", flexDirection: "column", gap: 14 },
-  statCard: { display: "flex", alignItems: "center", gap: 12, background: "#F7F5F0", border: "1px solid #E4E1D7", borderRadius: 10, padding: "12px 18px", minWidth: 220 },
+  statCard: { display: "flex", alignItems: "center", gap: 12, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 18px", minWidth: 220 },
   statDot: { width: 14, height: 14, borderRadius: "50%", flexShrink: 0 },
-  statNumber: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "#23262B", lineHeight: 1.1 },
-  statLabel: { fontSize: 12.5, color: "#6B6E76", marginTop: 2 },
+  statNumber: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
+  statLabel: { fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 },
+  insightSummaryCard: { marginTop: 26, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "16px 20px", maxWidth: 560 },
+  insightSummaryLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 },
+  insightSummaryText: { fontSize: 14, lineHeight: 1.7, color: "var(--text-primary)" },
 
   fab: { position: "fixed", bottom: 22, right: 22, width: 52, height: 52, borderRadius: "50%", background: "#C48A2E", color: "#fff", border: "none", boxShadow: "0 4px 14px rgba(196,138,46,0.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 40 },
-  memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "#1B2430", color: "#E7E5DE", borderRadius: 10, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
-  memberPanelTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#9CA0A8" },
+  memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
+  memberPanelTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   memberList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" },
   memberRow: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, padding: "4px 6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
-  memberDelete: { background: "transparent", border: "none", color: "#8B8D93", cursor: "pointer", display: "flex", alignItems: "center" },
+  memberDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
   memberAddRow: { display: "flex", flexDirection: "column", gap: 6 },
   memberInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, padding: "6px 8px", color: "#fff", fontSize: 13, outline: "none" },
   memberAddBtn: { background: "#5B7553", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
 
   bellBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#1B2430", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
   bellBadge: { position: "absolute", top: -3, right: -3, background: "#B4402C", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
-  notifPanel: { position: "fixed", top: 62, right: 14, width: 290, maxHeight: 380, overflowY: "auto", background: "#1B2430", color: "#E7E5DE", borderRadius: 10, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 50, display: "flex", flexDirection: "column", gap: 10 },
-  notifTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#9CA0A8" },
-  notifEmpty: { fontSize: 12.5, color: "#8B8D93", fontStyle: "italic" },
+  notifPanel: { position: "fixed", top: 62, right: 14, width: 290, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 50, display: "flex", flexDirection: "column", gap: 10 },
+  notifTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
+  notifEmpty: { fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" },
   notifGroup: { display: "flex", flexDirection: "column", gap: 5 },
   notifGroupLabelOverdue: { fontSize: 11, fontWeight: 600, color: "#E38585" },
   notifGroupLabelSoon: { fontSize: 11, fontWeight: 600, color: "#E3B570" },
   notifItem: { background: "rgba(255,255,255,0.05)", borderRadius: 7, padding: "8px 10px", cursor: "pointer" },
   notifItemText: { fontSize: 12.5, marginBottom: 2 },
-  notifItemMeta: { fontSize: 10.5, color: "#9CA0A8" },
+  notifItemMeta: { fontSize: 10.5, color: "var(--text-muted)" },
 
-  modalBackdrop: { position: "fixed", inset: 0, background: "rgba(20,20,20,0.45)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
-  modalBox: { background: "#fff", borderRadius: 10, padding: 20, width: "100%", maxWidth: 340, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", display: "flex", flexDirection: "column", gap: 16 },
-  modalMessage: { fontSize: 14.5, lineHeight: 1.5, color: "#23262B" },
+  modalBackdrop: { position: "fixed", inset: 0, background: "var(--modal-overlay)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
+  modalBox: { background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", borderRadius: 14, padding: 20, width: "100%", maxWidth: 340, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", display: "flex", flexDirection: "column", gap: 16 },
+  modalMessage: { fontSize: 14.5, lineHeight: 1.5, color: "var(--text-primary)" },
   modalActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
-  modalCancel: { background: "transparent", border: "1px solid #D4D0C3", color: "#6B6E76", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
+  modalCancel: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
   modalConfirm: { background: "#B4402C", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 };
