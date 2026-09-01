@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -91,8 +91,8 @@ const sampleWorkspaceData = () => {
           { id: col3, name: "Selesai", cardIds: [] },
         ],
         cards: {
-          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: [], cardType: "Video Semenit", checked: false },
-          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: [], cardType: "Poster Dakwah", checked: false },
+          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: [], cardType: "Video Semenit", qty: 1, checked: false },
+          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: [], cardType: "Poster Dakwah", qty: 1, checked: false },
         },
       },
     },
@@ -114,7 +114,11 @@ function normalizeWsData(raw) {
     Object.keys(cards).forEach((cid) => {
       const card = cards[cid];
       const involvedMembers = card.involvedMembers ? card.involvedMembers : card.assignee ? [card.assignee] : [];
-      cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "" };
+      // "qty" is a purely manual count next to the type dropdown — it never
+      // aggregates across cards of the same type. Existing cards without one
+      // default to 1, same as newly created cards.
+      const qty = Number(card.qty) > 0 ? Number(card.qty) : 1;
+      cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "", qty };
     });
     boards[bid] = { ...board, cards };
   });
@@ -201,6 +205,7 @@ function buildAndDownloadWorkbook(wsName, data) {
         rows.push({
           Kolom: col.name,
           "Jenis Kartu": card.cardType || "",
+          Jumlah: Number(card.qty) > 0 ? Number(card.qty) : 1,
           Kartu: card.text,
           "Anggota Terlibat": (card.involvedMembers || []).join(", "),
           "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
@@ -217,7 +222,7 @@ function buildAndDownloadWorkbook(wsName, data) {
     }
     usedNames.add(sheetName);
     const ws = XLSX.utils.json_to_sheet(
-      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Kartu: "(belum ada kartu)", "Anggota Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
+      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Jumlah: "", Kartu: "(belum ada kartu)", "Anggota Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
     );
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
@@ -321,6 +326,10 @@ export default function RuangWorkspace() {
   const [newAccPassword, setNewAccPassword] = useState("");
   const [newAccRole, setNewAccRole] = useState("member");
   const [accountError, setAccountError] = useState("");
+  const [editingAccount, setEditingAccount] = useState(null); // username currently being edited
+  const [editAccUsername, setEditAccUsername] = useState("");
+  const [editAccPassword, setEditAccPassword] = useState("");
+  const [editAccError, setEditAccError] = useState("");
 
   // ---- Workspace state ----
   const [workspaces, setWorkspaces] = useState(null);
@@ -570,6 +579,49 @@ export default function RuangWorkspace() {
     if (currentUser?.username === username) handleLogout();
   };
 
+  const startEditAccount = (username) => {
+    setEditingAccount(username);
+    setEditAccUsername(username);
+    setEditAccPassword("");
+    setEditAccError("");
+  };
+
+  const cancelEditAccount = () => {
+    setEditingAccount(null);
+    setEditAccUsername("");
+    setEditAccPassword("");
+    setEditAccError("");
+  };
+
+  const handleSaveEditAccount = async () => {
+    const oldUsername = editingAccount;
+    const uname = editAccUsername.trim();
+    if (!uname) {
+      setEditAccError("Username tidak boleh kosong.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/auth/accounts/${encodeURIComponent(oldUsername)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ newUsername: uname, newPassword: editAccPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEditAccError(data.error || "Gagal menyimpan perubahan.");
+        return;
+      }
+      if (currentUser?.username === oldUsername && uname !== oldUsername) {
+        setCurrentUser((u) => ({ ...u, username: uname }));
+      }
+      await loadAccounts();
+      cancelEditAccount();
+    } catch (e) {
+      setEditAccError("Tidak bisa terhubung ke server.");
+    }
+  };
+
   useEffect(() => {
     if (currentUser?.role === "admin" && showAccountPanel) loadAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -807,8 +859,11 @@ export default function RuangWorkspace() {
     });
   };
 
-  const addCard = (boardId, colId, text, duration, involvedMembers, cardType) => {
+  const addCard = (boardId, colId, text, duration, involvedMembers, cardType, qty) => {
     const finalText = (text && text.trim()) || cardType || "Kartu Baru";
+    // Purely manual: whatever the person typed for jumlah is what gets stored.
+    // No accumulation with other cards — default to 1 only when left empty.
+    const finalQty = Number(qty) > 0 ? Number(qty) : 1;
     setWsData((d) => {
       const board = d.boards[boardId];
       const id = uid();
@@ -820,7 +875,7 @@ export default function RuangWorkspace() {
             ...board,
             cards: {
               ...board.cards,
-              [id]: { id, text: finalText, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", checked: false },
+              [id]: { id, text: finalText, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false },
             },
             columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: [...c.cardIds, id] } : c)),
           },
@@ -959,6 +1014,15 @@ export default function RuangWorkspace() {
         accountError={accountError}
         onAddAccount={handleAddAccount}
         onRequestDeleteAccount={(u) => requestConfirm(`Hapus akun "${u}"?`, () => performDeleteAccount(u))}
+        editingAccount={editingAccount}
+        editAccUsername={editAccUsername}
+        setEditAccUsername={setEditAccUsername}
+        editAccPassword={editAccPassword}
+        setEditAccPassword={setEditAccPassword}
+        editAccError={editAccError}
+        onStartEditAccount={startEditAccount}
+        onCancelEditAccount={cancelEditAccount}
+        onSaveEditAccount={handleSaveEditAccount}
         workspaces={workspaces}
         activeWsId={activeWsId}
         onSelectWs={(id) => {
@@ -1141,6 +1205,15 @@ function Sidebar({
   accountError,
   onAddAccount,
   onRequestDeleteAccount,
+  editingAccount,
+  editAccUsername,
+  setEditAccUsername,
+  editAccPassword,
+  setEditAccPassword,
+  editAccError,
+  onStartEditAccount,
+  onCancelEditAccount,
+  onSaveEditAccount,
   workspaces,
   activeWsId,
   onSelectWs,
@@ -1210,16 +1283,49 @@ function Sidebar({
           {showAccountPanel && (
             <div style={styles.addWsPanel}>
               <div style={styles.memberList}>
-                {(accounts || []).map((a) => (
-                  <div key={a.username} style={styles.memberRow}>
-                    <span>
-                      {a.username} <span style={{ opacity: 0.6, fontSize: 10.5 }}>({a.role === "admin" ? "Admin" : "Anggota"})</span>
-                    </span>
-                    <button style={styles.memberDelete} onClick={() => onRequestDeleteAccount(a.username)}>
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
+                {(accounts || []).map((a) =>
+                  editingAccount === a.username ? (
+                    <div key={a.username} style={styles.editAccountRow}>
+                      <input
+                        style={styles.addWsInput}
+                        placeholder="Username…"
+                        value={editAccUsername}
+                        onChange={(e) => setEditAccUsername(e.target.value)}
+                        autoFocus
+                      />
+                      <input
+                        style={styles.addWsInput}
+                        type="password"
+                        placeholder="Kata sandi baru (kosongkan jika tidak diubah)"
+                        value={editAccPassword}
+                        onChange={(e) => setEditAccPassword(e.target.value)}
+                      />
+                      {editAccError && <div style={styles.authError}>{editAccError}</div>}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button style={{ ...styles.createWsBtn, flex: 1 }} onClick={onSaveEditAccount}>
+                          Simpan
+                        </button>
+                        <button style={styles.addTypeCancelBtn} onClick={onCancelEditAccount} title="Batal">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={a.username} style={styles.memberRow}>
+                      <span>
+                        {a.username} <span style={{ opacity: 0.6, fontSize: 10.5 }}>({a.role === "admin" ? "Admin" : "Anggota"})</span>
+                      </span>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button style={styles.memberDelete} onClick={() => onStartEditAccount(a.username)} title="Edit akun">
+                          <Pencil size={13} />
+                        </button>
+                        <button style={styles.memberDelete} onClick={() => onRequestDeleteAccount(a.username)} title="Hapus akun">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                )}
               </div>
               <input style={styles.addWsInput} placeholder="Username baru…" value={newAccUsername} onChange={(e) => setNewAccUsername(e.target.value)} />
               <input style={styles.addWsInput} type="password" placeholder="Kata sandi…" value={newAccPassword} onChange={(e) => setNewAccPassword(e.target.value)} />
@@ -1442,7 +1548,7 @@ function Sidebar({
   );
 }
 
-function TypeSelect({ value, options, counts, onChange, onAddOption }) {
+function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
 
@@ -1500,12 +1606,34 @@ function TypeSelect({ value, options, counts, onChange, onAddOption }) {
         <option value="">Pilih jenis kartu…</option>
         {options.map((t) => (
           <option key={t} value={t}>
-            {counts && counts[t] ? `${t} (${counts[t]})` : t}
-        </option>
-      ))}
-      <option value="__add_new__">+ Tambah jenis baru…</option>
+            {t}
+          </option>
+        ))}
+        <option value="__add_new__">+ Tambah jenis baru…</option>
       </select>
-      {value && counts && counts[value] ? <span style={styles.typeCountBadge}>{counts[value]}</span> : null}
+      {onQtyChange && (
+        <input
+          type="number"
+          min={1}
+          style={styles.typeQtyInput}
+          value={qty === "" || qty === undefined || qty === null ? "" : qty}
+          placeholder="1"
+          title="Jumlah (input manual, tidak terakumulasi dengan kartu lain)"
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onQtyChange("");
+              return;
+            }
+            const n = parseInt(raw, 10);
+            onQtyChange(Number.isFinite(n) && n > 0 ? n : 1);
+          }}
+          onBlur={(e) => {
+            // Left blank -> silently default to 1, exactly as if the person had typed it.
+            if (e.target.value === "") onQtyChange(1);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1514,13 +1642,8 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
 
-  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" };
+  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
-
-  const typeCounts = {};
-  Object.values(board.cards).forEach((c) => {
-    if (c.cardType) typeCounts[c.cardType] = (typeCounts[c.cardType] || 0) + 1;
-  });
 
   const toggleDraftMember = (colId, name) => {
     const dr = draft(colId);
@@ -1533,8 +1656,8 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
     if (!dr.text.trim() && !dr.cardType) return; // need at least a name or a chosen type to create something
     // Default duration is 1 day when the person doesn't set one explicitly.
     const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : { amount: 1, unit: "hari" };
-    onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType);
-    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" } }));
+    onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType, dr.qty);
+    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 } }));
   };
 
   const toggleCardMember = (boardId, cid, currentList, name) => {
@@ -1608,8 +1731,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                     <TypeSelect
                       value={card.cardType}
                       options={cardTypes}
-                      counts={typeCounts}
+                      qty={card.qty}
                       onChange={(v) => onUpdateCard(board.id, cid, { cardType: v })}
+                      onQtyChange={(v) => onUpdateCard(board.id, cid, { qty: v === "" ? "" : Number(v) })}
                       onAddOption={onAddCardType}
                     />
 
@@ -1652,8 +1776,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                 <TypeSelect
                   value={draft(col.id).cardType}
                   options={cardTypes}
-                  counts={typeCounts}
+                  qty={draft(col.id).qty}
                   onChange={(v) => setDraft(col.id, { cardType: v })}
+                  onQtyChange={(v) => setDraft(col.id, { qty: v })}
                   onAddOption={onAddCardType}
                 />
 
@@ -1873,6 +1998,7 @@ const styles = {
   typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
   typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
   typeCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: "#fff", background: "#C48A2E", borderRadius: 10, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 },
+  typeQtyInput: { width: 40, border: "1px solid var(--card-border)", borderRadius: 5, background: "var(--input-bg)", fontSize: 11.5, color: "var(--text-primary)", outline: "none", padding: "4px 4px", textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0, boxSizing: "border-box" },
   assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
   createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-faint)" },
@@ -1924,6 +2050,7 @@ const styles = {
   memberPanelTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   memberList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" },
   memberRow: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, padding: "4px 6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
+  editAccountRow: { display: "flex", flexDirection: "column", gap: 6, padding: "6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
   memberDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
   memberAddRow: { display: "flex", flexDirection: "column", gap: 6 },
   memberInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, padding: "6px 8px", color: "#fff", fontSize: 13, outline: "none" },
