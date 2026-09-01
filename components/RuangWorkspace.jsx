@@ -1692,10 +1692,10 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
     if (!dr.text.trim() && !dr.cardType) return; // need at least a name or a chosen type to create something
     // Default duration is 1 day when the person doesn't set one explicitly.
     const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : { amount: 1, unit: "hari" };
-    // Whoever makes the card is automatically part of the tim terlibat — a
-    // member doesn't need an admin to pick them, since they only get the
-    // chip picker when they're an admin themselves.
-    const involvedMembers = currentUsername && !dr.involvedMembers.includes(currentUsername) ? [...dr.involvedMembers, currentUsername] : dr.involvedMembers;
+    // Only fall back to the creator's own username when nobody was
+    // explicitly picked from the chip list — if members were chosen
+    // (by an admin), that explicit choice is respected as-is.
+    const involvedMembers = dr.involvedMembers.length > 0 ? dr.involvedMembers : currentUsername ? [currentUsername] : [];
     onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty);
     setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 } }));
   };
