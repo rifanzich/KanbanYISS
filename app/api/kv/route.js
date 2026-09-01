@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "../../../lib/auth";
-import { storageGet, storageSet, storageDelete } from "../../../lib/kv";
+import { storageGet, storageSet, storageDelete, canAccessSharedKey } from "../../../lib/kv";
 import { errorMessage } from "../../../lib/apiError";
 
 export async function GET(request) {
@@ -11,6 +11,9 @@ export async function GET(request) {
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && !(await canAccessSharedKey(key, user))) {
+      return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
+    }
     const value = await storageGet(key, shared, user.username);
     if (value === null || value === undefined) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -28,6 +31,9 @@ export async function POST(request) {
     const body = await request.json().catch(() => ({}));
     const { key, value, shared } = body;
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && !(await canAccessSharedKey(key, user))) {
+      return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
+    }
     await storageSet(key, value, !!shared, user.username);
     return NextResponse.json({ key, value });
   } catch (err) {
@@ -43,6 +49,9 @@ export async function DELETE(request) {
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && !(await canAccessSharedKey(key, user))) {
+      return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
+    }
     await storageDelete(key, shared, user.username);
     return NextResponse.json({ key, deleted: true });
   } catch (err) {

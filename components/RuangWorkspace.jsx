@@ -42,7 +42,6 @@ if (typeof window !== "undefined" && !window.__ruangStorageInstalled) {
 const PERSONAL_INDEX_KEY = "ruang-personal-index";
 const SHARED_INDEX_KEY = "ruang-shared-index";
 const dataKey = (id) => `ruang-data-${id}`;
-const DEFAULT_MEMBERS = ["Rifan", "Mohammad"];
 const DEFAULT_CARD_TYPES = [
   "Video Semenit",
   "Kalam Ulama",
@@ -72,7 +71,6 @@ const emptyWorkspaceData = () => ({
   boardOrder: [],
   notes: {},
   noteOrder: [],
-  members: [...DEFAULT_MEMBERS],
   cardTypes: [...DEFAULT_CARD_TYPES],
   active: { type: "none" },
 });
@@ -93,15 +91,14 @@ const sampleWorkspaceData = () => {
           { id: col3, name: "Selesai", cardIds: [] },
         ],
         cards: {
-          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: ["Rifan"], cardType: "Video Semenit", checked: false },
-          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: ["Mohammad", "Rifan"], cardType: "Poster Dakwah", checked: false },
+          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: [], cardType: "Video Semenit", checked: false },
+          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: [], cardType: "Poster Dakwah", checked: false },
         },
       },
     },
     boardOrder: [boardId],
     notes: {},
     noteOrder: [],
-    members: [...DEFAULT_MEMBERS],
     cardTypes: [...DEFAULT_CARD_TYPES],
     active: { type: "board", id: boardId },
   };
@@ -109,7 +106,6 @@ const sampleWorkspaceData = () => {
 
 function normalizeWsData(raw) {
   const base = raw ? raw : emptyWorkspaceData();
-  const members = base.members && base.members.length ? base.members : [...DEFAULT_MEMBERS];
   const cardTypes = base.cardTypes && base.cardTypes.length ? base.cardTypes : [...DEFAULT_CARD_TYPES];
   const boards = { ...(base.boards || {}) };
   Object.keys(boards).forEach((bid) => {
@@ -122,7 +118,7 @@ function normalizeWsData(raw) {
     });
     boards[bid] = { ...board, cards };
   });
-  return { ...base, members, cardTypes, boards };
+  return { ...base, cardTypes, boards };
 }
 
 function useDebouncedSave(key, value, shared, ready) {
@@ -335,15 +331,29 @@ export default function RuangWorkspace() {
   const [showAddWs, setShowAddWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
   const [newWsMode, setNewWsMode] = useState("personal");
+  const [newWsRoster, setNewWsRoster] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [showMemberPanel, setShowMemberPanel] = useState(false);
-  const [newMemberName, setNewMemberName] = useState("");
+  const [allUsernames, setAllUsernames] = useState([]);
+  const [rosterPanelWsId, setRosterPanelWsId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [theme, setTheme] = useState("light");
   const [, forceTick] = useState(0);
 
   const requestConfirm = (message, onConfirm) => setConfirmDialog({ message, onConfirm });
+
+  // Load the roster of registered usernames once logged in (used for tagging
+  // "anggota terlibat" and for building/managing team workspace rosters).
+  useEffect(() => {
+    if (!currentUser) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/usernames", { credentials: "include" });
+        const data = await res.json();
+        if (res.ok) setAllUsernames(data.usernames || []);
+      } catch (e) {}
+    })();
+  }, [currentUser?.username]);
 
   // Load saved theme preference once logged in, and persist changes
   useEffect(() => {
@@ -409,7 +419,7 @@ export default function RuangWorkspace() {
         if (res && res.value) shared = JSON.parse(res.value);
       } catch (e) {}
 
-      let list = [...personal, ...shared];
+      let list = [...personal, ...shared.filter((ws) => currentUser.role === "admin" || (ws.allowedMembers || []).includes(currentUser.username))];
       if (list.length === 0) {
         const id = uid();
         const entry = { id, name: "Ruang Pertama", mode: "personal" };
@@ -570,7 +580,8 @@ export default function RuangWorkspace() {
     const name = newWsName.trim() || "Ruang Baru";
     const id = uid();
     const mode = newWsMode;
-    const entry = { id, name, mode };
+    const allowedMembers = mode === "team" ? Array.from(new Set([...newWsRoster, currentUser.username])) : undefined;
+    const entry = mode === "team" ? { id, name, mode, allowedMembers } : { id, name, mode };
     const empty = emptyWorkspaceData();
     try {
       await window.storage.set(dataKey(id), JSON.stringify(empty), mode === "team");
@@ -591,6 +602,19 @@ export default function RuangWorkspace() {
     setShowAddWs(false);
     setNewWsName("");
     setNewWsMode("personal");
+    setNewWsRoster([]);
+  };
+
+  const updateWorkspaceRoster = async (ws, nextRoster) => {
+    try {
+      const res = await window.storage.get(SHARED_INDEX_KEY, true).catch(() => null);
+      const current = res && res.value ? JSON.parse(res.value) : [];
+      const updated = current.map((w) => (w.id === ws.id ? { ...w, allowedMembers: nextRoster } : w));
+      await window.storage.set(SHARED_INDEX_KEY, JSON.stringify(updated), true);
+    } catch (e) {
+      console.error("Gagal memperbarui anggota ruang:", e);
+    }
+    setWorkspaces((list) => list.map((w) => (w.id === ws.id ? { ...w, allowedMembers: nextRoster } : w)));
   };
 
   const performDeleteWorkspace = async (ws) => {
@@ -696,20 +720,9 @@ export default function RuangWorkspace() {
   const setActive = (active) => setWsData((d) => ({ ...d, active }));
   const closeSidebar = () => setSidebarOpen(false);
 
-  const addMember = () => {
-    const name = newMemberName.trim();
-    if (!name) return;
-    setWsData((d) => (d.members.includes(name) ? d : { ...d, members: [...d.members, name] }));
-    setNewMemberName("");
-  };
-
-  const performDeleteMember = (name) => {
-    setWsData((d) => ({ ...d, members: d.members.filter((m) => m !== name) }));
-  };
-
-  const requestDeleteMember = (name) => {
-    requestConfirm(`Hapus anggota "${name}" dari daftar?`, () => performDeleteMember(name));
-  };
+  // "Anggota terlibat" now draws from real portal accounts: the approved
+  // roster for team workspaces, or every registered account for personal ones.
+  const availableMembers = activeWs?.mode === "team" ? activeWs.allowedMembers || [] : allUsernames;
 
   const addCardType = (name) => {
     const trimmed = name.trim();
@@ -795,7 +808,7 @@ export default function RuangWorkspace() {
   };
 
   const addCard = (boardId, colId, text, duration, involvedMembers, cardType) => {
-    if (!text.trim()) return;
+    const finalText = (text && text.trim()) || cardType || "Kartu Baru";
     setWsData((d) => {
       const board = d.boards[boardId];
       const id = uid();
@@ -807,7 +820,7 @@ export default function RuangWorkspace() {
             ...board,
             cards: {
               ...board.cards,
-              [id]: { id, text, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", checked: false },
+              [id]: { id, text: finalText, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", checked: false },
             },
             columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: [...c.cardIds, id] } : c)),
           },
@@ -961,6 +974,12 @@ export default function RuangWorkspace() {
         setNewWsName={setNewWsName}
         newWsMode={newWsMode}
         setNewWsMode={setNewWsMode}
+        newWsRoster={newWsRoster}
+        setNewWsRoster={setNewWsRoster}
+        allUsernames={allUsernames}
+        rosterPanelWsId={rosterPanelWsId}
+        onToggleRosterPanel={(id) => setRosterPanelWsId((cur) => (cur === id ? null : id))}
+        onUpdateRoster={updateWorkspaceRoster}
         onCreateWs={createWorkspace}
         wsData={wsData}
         onSelectBoard={(id) => {
@@ -982,12 +1001,12 @@ export default function RuangWorkspace() {
       />
       <main className="rw-main" style={styles.main}>
         {activeWs?.mode === "team" && (
-          <div style={styles.teamBanner}>Ruang tim — dapat dilihat dan diedit oleh siapa pun yang membuka aplikasi ini.</div>
+          <div style={styles.teamBanner}>Ruang tim — hanya anggota yang disetujui admin yang bisa membuka dan mengedit ruang ini.</div>
         )}
         {activeBoard && (
           <BoardView
             board={activeBoard}
-            members={wsData.members}
+            members={availableMembers}
             cardTypes={wsData.cardTypes}
             onAddCardType={addCardType}
             isAdmin={isAdmin}
@@ -1046,38 +1065,6 @@ export default function RuangWorkspace() {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Floating action button: manage team members */}
-      <button style={styles.fab} onClick={() => setShowMemberPanel((v) => !v)} title="Kelola anggota" aria-label="Tambah anggota">
-        <Plus size={22} strokeWidth={2.4} />
-      </button>
-      {showMemberPanel && (
-        <div style={styles.memberPanel}>
-          <div style={styles.memberPanelTitle}>Anggota Tim</div>
-          <div style={styles.memberList}>
-            {wsData.members.map((m) => (
-              <div key={m} style={styles.memberRow}>
-                <span>{m}</span>
-                <button style={styles.memberDelete} onClick={() => requestDeleteMember(m)} aria-label={`Hapus ${m}`}>
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div style={styles.memberAddRow}>
-            <input
-              style={styles.memberInput}
-              placeholder="Nama anggota baru…"
-              value={newMemberName}
-              onChange={(e) => setNewMemberName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addMember()}
-            />
-            <button style={styles.memberAddBtn} onClick={addMember}>
-              Tambahkan
-            </button>
-          </div>
         </div>
       )}
 
@@ -1166,6 +1153,12 @@ function Sidebar({
   setNewWsName,
   newWsMode,
   setNewWsMode,
+  newWsRoster,
+  setNewWsRoster,
+  allUsernames,
+  rosterPanelWsId,
+  onToggleRosterPanel,
+  onUpdateRoster,
   onCreateWs,
   wsData,
   onSelectBoard,
@@ -1261,6 +1254,18 @@ function Sidebar({
             <div key={ws.id} style={{ ...styles.wsItem, ...(ws.id === activeWsId ? styles.wsItemActive : {}) }} onClick={() => onSelectWs(ws.id)}>
               <span style={styles.listItemText}>{ws.name}</span>
               <span style={{ ...styles.wsBadge, ...(ws.mode === "team" ? styles.wsBadgeTeam : {}) }}>{ws.mode === "team" ? "Tim" : "Pribadi"}</span>
+              {ws.mode === "team" && isAdmin && (
+                <button
+                  style={styles.iconBtnSmall}
+                  title="Kelola anggota ruang tim"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleRosterPanel(ws.id);
+                  }}
+                >
+                  <ShieldCheck size={13} />
+                </button>
+              )}
               <button
                 style={styles.iconBtnSmall}
                 title="Ekspor ke spreadsheet"
@@ -1284,6 +1289,37 @@ function Sidebar({
             </div>
           ))}
         </div>
+
+        {rosterPanelWsId &&
+          (() => {
+            const ws = workspaces.find((w) => w.id === rosterPanelWsId);
+            if (!ws) return null;
+            const roster = ws.allowedMembers || [];
+            return (
+              <div style={styles.addWsPanel}>
+                <div style={styles.wsHeadLabel}>Anggota "{ws.name}"</div>
+                <div style={styles.modeHint}>Hanya username yang dicentang yang bisa membuka & mengedit ruang tim ini.</div>
+                <div style={styles.chipRow}>
+                  {allUsernames.map((u) => {
+                    const active = roster.includes(u);
+                    return (
+                      <button
+                        key={u}
+                        style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }}
+                        onClick={() => onUpdateRoster(ws, active ? roster.filter((m) => m !== u) : [...roster, u])}
+                      >
+                        {u}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button style={styles.createWsBtn} onClick={() => onToggleRosterPanel(null)}>
+                  Selesai
+                </button>
+              </div>
+            );
+          })()}
+
         {showAddWs && (
           <div style={styles.addWsPanel}>
             <input
@@ -1298,11 +1334,32 @@ function Sidebar({
               <button style={{ ...styles.modeBtn, ...(newWsMode === "personal" ? styles.modeBtnActive : {}) }} onClick={() => setNewWsMode("personal")}>
                 Pribadi
               </button>
-              <button style={{ ...styles.modeBtn, ...(newWsMode === "team" ? styles.modeBtnActive : {}) }} onClick={() => setNewWsMode("team")}>
-                Tim
-              </button>
+              {isAdmin && (
+                <button style={{ ...styles.modeBtn, ...(newWsMode === "team" ? styles.modeBtnActive : {}) }} onClick={() => setNewWsMode("team")}>
+                  Tim
+                </button>
+              )}
             </div>
-            {newWsMode === "team" && <div style={styles.modeHint}>Ruang tim bisa dilihat & diedit siapa pun yang membuka aplikasi ini.</div>}
+            {newWsMode === "team" && (
+              <>
+                <div style={styles.modeHint}>Pilih username yang boleh membuka & mengedit ruang tim ini (bisa diubah lagi nanti).</div>
+                <div style={styles.chipRow}>
+                  {allUsernames.map((u) => {
+                    const active = newWsRoster.includes(u) || u === currentUser.username;
+                    return (
+                      <button
+                        key={u}
+                        disabled={u === currentUser.username}
+                        style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }}
+                        onClick={() => setNewWsRoster((r) => (r.includes(u) ? r.filter((m) => m !== u) : [...r, u]))}
+                      >
+                        {u}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
             <button style={styles.createWsBtn} onClick={onCreateWs}>
               Buat Ruang
             </button>
@@ -1385,7 +1442,7 @@ function Sidebar({
   );
 }
 
-function TypeSelect({ value, options, onChange, onAddOption }) {
+function TypeSelect({ value, options, counts, onChange, onAddOption }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
 
@@ -1428,25 +1485,28 @@ function TypeSelect({ value, options, onChange, onAddOption }) {
   }
 
   return (
-    <select
-      style={styles.typeSelect}
-      value={value || ""}
-      onChange={(e) => {
-        if (e.target.value === "__add_new__") {
-          setAdding(true);
-          return;
-        }
-        onChange(e.target.value);
-      }}
-    >
-      <option value="">Pilih jenis kartu…</option>
-      {options.map((t) => (
-        <option key={t} value={t}>
-          {t}
+    <div style={styles.typeSelectRow}>
+      <select
+        style={styles.typeSelect}
+        value={value || ""}
+        onChange={(e) => {
+          if (e.target.value === "__add_new__") {
+            setAdding(true);
+            return;
+          }
+          onChange(e.target.value);
+        }}
+      >
+        <option value="">Pilih jenis kartu…</option>
+        {options.map((t) => (
+          <option key={t} value={t}>
+            {counts && counts[t] ? `${t} (${counts[t]})` : t}
         </option>
       ))}
       <option value="__add_new__">+ Tambah jenis baru…</option>
-    </select>
+      </select>
+      {value && counts && counts[value] ? <span style={styles.typeCountBadge}>{counts[value]}</span> : null}
+    </div>
   );
 }
 
@@ -1457,6 +1517,11 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
   const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
 
+  const typeCounts = {};
+  Object.values(board.cards).forEach((c) => {
+    if (c.cardType) typeCounts[c.cardType] = (typeCounts[c.cardType] || 0) + 1;
+  });
+
   const toggleDraftMember = (colId, name) => {
     const dr = draft(colId);
     const has = dr.involvedMembers.includes(name);
@@ -1465,7 +1530,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
 
   const submit = (colId) => {
     const dr = draft(colId);
-    if (!dr.text.trim()) return;
+    if (!dr.text.trim() && !dr.cardType) return; // need at least a name or a chosen type to create something
     // Default duration is 1 day when the person doesn't set one explicitly.
     const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : { amount: 1, unit: "hari" };
     onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType);
@@ -1543,6 +1608,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                     <TypeSelect
                       value={card.cardType}
                       options={cardTypes}
+                      counts={typeCounts}
                       onChange={(v) => onUpdateCard(board.id, cid, { cardType: v })}
                       onAddOption={onAddCardType}
                     />
@@ -1586,6 +1652,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                 <TypeSelect
                   value={draft(col.id).cardType}
                   options={cardTypes}
+                  counts={typeCounts}
                   onChange={(v) => setDraft(col.id, { cardType: v })}
                   onAddOption={onAddCardType}
                 />
@@ -1803,7 +1870,9 @@ const styles = {
   cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700 },
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
-  typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", width: "100%", boxSizing: "border-box" },
+  typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
+  typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
+  typeCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: "#fff", background: "#C48A2E", borderRadius: 10, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 },
   assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
   createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-faint)" },
@@ -1812,16 +1881,16 @@ const styles = {
   chip: { border: "1px solid var(--card-border)", background: "var(--surface-strong)", color: "var(--text-muted)", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
   chipActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
   typeAddRow: { display: "flex", gap: 6 },
-  addTypeInput: { flex: 1, border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
+  addTypeInput: { flex: 1, border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
   addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#5B7553", color: "#fff", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
   addTypeCancelBtn: { border: "1px solid var(--input-border)", borderRadius: 6, background: "transparent", color: "var(--text-faint)", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
   durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "var(--surface-solid)", color: "var(--text-muted)" },
   durationOverdue: { background: "#FBE7E4", color: "#B4402C" },
   durationDueSoon: { background: "#FCF0DA", color: "#9A6A15" },
   addCardRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
-  addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box" },
+  addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box", color: "var(--text-primary)" },
   durationRow: { display: "flex", gap: 6 },
-  durationInput: { width: 60, border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box" },
+  durationInput: { width: 60, border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
   durationSelect: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 4px", fontSize: 12, outline: "none", background: "var(--input-bg)", color: "var(--text-primary)" },
   durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
   durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
