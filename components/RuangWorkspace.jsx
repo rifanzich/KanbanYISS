@@ -207,7 +207,7 @@ function buildAndDownloadWorkbook(wsName, data) {
           "Jenis Kartu": card.cardType || "",
           Jumlah: Number(card.qty) > 0 ? Number(card.qty) : 1,
           Kartu: card.text,
-          "Anggota Terlibat": (card.involvedMembers || []).join(", "),
+          "Tim Terlibat": (card.involvedMembers || []).join(", "),
           "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
           Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : "",
           "Dibuat pada": formatCreatedDate(card.createdAt),
@@ -222,7 +222,7 @@ function buildAndDownloadWorkbook(wsName, data) {
     }
     usedNames.add(sheetName);
     const ws = XLSX.utils.json_to_sheet(
-      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Jumlah: "", Kartu: "(belum ada kartu)", "Anggota Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
+      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Jumlah: "", Kartu: "(belum ada kartu)", "Tim Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
     );
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
@@ -349,7 +349,8 @@ export default function RuangWorkspace() {
   const [theme, setTheme] = useState("light");
   const [, forceTick] = useState(0);
 
-  const requestConfirm = (message, onConfirm) => setConfirmDialog({ message, onConfirm });
+  const requestConfirm = (message, onConfirm, options) =>
+    setConfirmDialog({ message, onConfirm, confirmLabel: options?.confirmLabel, onCancel: options?.onCancel });
 
   // Load the roster of registered usernames once logged in (used for tagging
   // "anggota terlibat" and for building/managing team workspace rosters).
@@ -772,7 +773,7 @@ export default function RuangWorkspace() {
   const setActive = (active) => setWsData((d) => ({ ...d, active }));
   const closeSidebar = () => setSidebarOpen(false);
 
-  // "Anggota terlibat" now draws from real portal accounts: the approved
+  // "Tim terlibat" now draws from real portal accounts: the approved
   // roster for team workspaces, or every registered account for personal ones.
   const availableMembers = activeWs?.mode === "team" ? activeWs.allowedMembers || [] : allUsernames;
 
@@ -1074,6 +1075,7 @@ export default function RuangWorkspace() {
             cardTypes={wsData.cardTypes}
             onAddCardType={addCardType}
             isAdmin={isAdmin}
+            currentUsername={currentUser.username}
             onRename={renameBoard}
             onAddColumn={addColumn}
             onRenameColumn={renameColumn}
@@ -1137,7 +1139,13 @@ export default function RuangWorkspace() {
           <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalMessage}>{confirmDialog.message}</div>
             <div style={styles.modalActions}>
-              <button style={styles.modalCancel} onClick={() => setConfirmDialog(null)}>
+              <button
+                style={styles.modalCancel}
+                onClick={() => {
+                  confirmDialog.onCancel?.();
+                  setConfirmDialog(null);
+                }}
+              >
                 Batal
               </button>
               <button
@@ -1147,7 +1155,7 @@ export default function RuangWorkspace() {
                   setConfirmDialog(null);
                 }}
               >
-                Hapus
+                {confirmDialog.confirmLabel || "Hapus"}
               </button>
             </div>
           </div>
@@ -1548,9 +1556,18 @@ function Sidebar({
   );
 }
 
-function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption }) {
+function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, onRequestConfirm }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const committedQty = qty === undefined || qty === null || qty === "" ? 1 : qty;
+  const [qtyDraft, setQtyDraft] = useState(committedQty);
+
+  // Stay in sync whenever the committed value changes from outside (e.g.
+  // after a confirmed save, or another surface updating the card).
+  useEffect(() => {
+    setQtyDraft(committedQty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [committedQty]);
 
   const confirmAdd = () => {
     const trimmed = name.trim();
@@ -1616,21 +1633,40 @@ function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption })
           type="number"
           min={1}
           style={styles.typeQtyInput}
-          value={qty === "" || qty === undefined || qty === null ? "" : qty}
+          value={qtyDraft === "" ? "" : qtyDraft}
           placeholder="1"
           title="Jumlah (input manual, tidak terakumulasi dengan kartu lain)"
           onChange={(e) => {
             const raw = e.target.value;
             if (raw === "") {
-              onQtyChange("");
+              setQtyDraft("");
               return;
             }
             const n = parseInt(raw, 10);
-            onQtyChange(Number.isFinite(n) && n > 0 ? n : 1);
+            setQtyDraft(Number.isFinite(n) && n > 0 ? n : 1);
           }}
-          onBlur={(e) => {
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          onBlur={() => {
             // Left blank -> silently default to 1, exactly as if the person had typed it.
-            if (e.target.value === "") onQtyChange(1);
+            const finalVal = qtyDraft === "" ? 1 : qtyDraft;
+            if (finalVal === committedQty) {
+              setQtyDraft(finalVal);
+              return;
+            }
+            // Editing an already-saved quantity needs an explicit
+            // simpan/batal confirmation. New (not-yet-created) cards don't
+            // get one — nothing's saved yet, so onRequestConfirm is omitted
+            // for that draft row.
+            if (onRequestConfirm) {
+              onRequestConfirm(`Simpan jumlah baru "${finalVal}" untuk kartu ini?`, () => onQtyChange(finalVal), {
+                confirmLabel: "Simpan",
+                onCancel: () => setQtyDraft(committedQty),
+              });
+            } else {
+              onQtyChange(finalVal);
+            }
           }}
         />
       )}
@@ -1638,7 +1674,7 @@ function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption })
   );
 }
 
-function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
+function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
 
@@ -1656,7 +1692,11 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
     if (!dr.text.trim() && !dr.cardType) return; // need at least a name or a chosen type to create something
     // Default duration is 1 day when the person doesn't set one explicitly.
     const duration = dr.amount ? { amount: Number(dr.amount), unit: dr.unit } : { amount: 1, unit: "hari" };
-    onAddCard(board.id, colId, dr.text, duration, dr.involvedMembers, dr.cardType, dr.qty);
+    // Whoever makes the card is automatically part of the tim terlibat — a
+    // member doesn't need an admin to pick them, since they only get the
+    // chip picker when they're an admin themselves.
+    const involvedMembers = currentUsername && !dr.involvedMembers.includes(currentUsername) ? [...dr.involvedMembers, currentUsername] : dr.involvedMembers;
+    onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty);
     setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 } }));
   };
 
@@ -1735,9 +1775,10 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                       onChange={(v) => onUpdateCard(board.id, cid, { cardType: v })}
                       onQtyChange={(v) => onUpdateCard(board.id, cid, { qty: v === "" ? "" : Number(v) })}
                       onAddOption={onAddCardType}
+                      onRequestConfirm={onRequestConfirm}
                     />
 
-                    <div style={styles.involvedLabel}>Anggota terlibat</div>
+                    <div style={styles.involvedLabel}>Tim terlibat</div>
                     {isAdmin ? (
                       <div style={styles.chipRow}>
                         {members.map((m) => {
@@ -1784,7 +1825,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
 
                 {isAdmin ? (
                   <div>
-                    <div style={styles.involvedLabel}>Anggota terlibat</div>
+                    <div style={styles.involvedLabel}>Tim terlibat</div>
                     <div style={styles.chipRow}>
                       {members.map((m) => {
                         const active = draft(col.id).involvedMembers.includes(m);
@@ -1797,7 +1838,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, onRename
                     </div>
                   </div>
                 ) : (
-                  <div style={styles.assigneeReadonlyHint}>Penugasan anggota hanya bisa diatur oleh admin</div>
+                  <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
                 )}
 
                 <div className="rw-duration-row" style={styles.durationRow}>
