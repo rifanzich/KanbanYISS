@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -75,6 +75,26 @@ function toDateInputValue(ts) {
 function dateInputToTimestamp(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 8, 0, 0, 0).getTime();
+}
+
+// Picking "today" means "start counting from right now" (the actual
+// creation/edit moment), not from a fixed 08:00 — the 08:00 anchor is only
+// for a date that's genuinely different from today (past or future).
+function resolveManualCreatedAt(dateStr) {
+  if (!dateStr) return undefined;
+  const todayStr = toDateInputValue(Date.now());
+  return dateStr === todayStr ? Date.now() : dateInputToTimestamp(dateStr);
+}
+
+// The "mulai 08:00 di tanggal ini" hint should only show for a date that's
+// tomorrow or later — not for today (which just uses the current time), and
+// not for a past date either.
+function startDateHint(dateStr) {
+  if (!dateStr) return "kosongkan = hari ini";
+  const todayStr = toDateInputValue(Date.now());
+  if (dateStr === todayStr) return "mulai dari waktu sekarang";
+  if (dateStr > todayStr) return "mulai 08:00 di tanggal ini";
+  return "tanggal lampau · dihitung mulai 08:00";
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -297,6 +317,27 @@ const RESPONSIVE_CSS = `
 .rw-backdrop { display: none; }
 .rw-board-title { font-size: 26px; }
 .rw-column { width: 270px; min-width: 270px; }
+.rw-card {
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.rw-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(35,38,43,0.12);
+}
+.rw-card:active { cursor: grabbing; }
+.rw-app button, .rw-app select, .rw-app input {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+.rw-app button:hover:not(:disabled) { opacity: 0.85; }
+.rw-app button:active:not(:disabled) { opacity: 0.7; }
+.rw-app *:focus-visible {
+  outline: 2px solid #C48A2E;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rw-card, .rw-app button, .rw-app select, .rw-app input, .rw-sidebar { transition: none !important; }
+  .rw-card:hover { transform: none; }
+}
 @media (max-width: 900px) {
   .rw-sidebar {
     position: fixed; top: 0; left: 0; height: 100vh; width: 82%; max-width: 300px;
@@ -1705,7 +1746,7 @@ function CreatedDateEditor({ createdAt, onChange }) {
 
   const save = () => {
     if (draftDate) {
-      const newTs = dateInputToTimestamp(draftDate);
+      const newTs = resolveManualCreatedAt(draftDate);
       if (newTs !== createdAt) onChange(newTs);
     }
     setEditing(false);
@@ -1733,6 +1774,7 @@ function CreatedDateEditor({ createdAt, onChange }) {
         <button style={styles.addTypeCancelBtn} onClick={cancel} title="Batal">
           <X size={12} />
         </button>
+        <span style={styles.durationHint}>{startDateHint(draftDate)}</span>
       </div>
     );
   }
@@ -1744,6 +1786,67 @@ function CreatedDateEditor({ createdAt, onChange }) {
       <button style={styles.dateEditBtn} onClick={() => setEditing(true)} title="Ubah tanggal mulai (boleh tanggal lampau atau mendatang)">
         <Pencil size={11} />
       </button>
+    </div>
+  );
+}
+
+// Inline card-title editor: click the pencil to rename an existing card
+// without losing its checked state, duration, or other fields. Enter/blur
+// saves, Escape reverts.
+function CardTitle({ text, checked, onToggleCheck, onSave, onRequestDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+
+  useEffect(() => {
+    if (!editing) setDraft(text);
+  }, [text, editing]);
+
+  const save = () => {
+    const trimmed = draft.trim();
+    setEditing(false);
+    if (trimmed && trimmed !== text) onSave(trimmed);
+    else setDraft(text);
+  };
+
+  const cancel = () => {
+    setDraft(text);
+    setEditing(false);
+  };
+
+  return (
+    <div style={styles.cardTop}>
+      {editing ? (
+        <input
+          style={styles.cardTitleInput}
+          value={draft}
+          autoFocus
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              save();
+            }
+            if (e.key === "Escape") cancel();
+          }}
+          onBlur={save}
+        />
+      ) : (
+        <label style={styles.checkLabel}>
+          <input type="checkbox" checked={!!checked} onChange={onToggleCheck} style={styles.checkbox} />
+          <span style={{ ...styles.cardText, ...(checked ? styles.cardTextDone : {}) }}>{text}</span>
+        </label>
+      )}
+      <div style={styles.cardTopActions}>
+        {!editing && (
+          <button style={styles.cardEditBtn} onClick={() => setEditing(true)} title="Ubah nama kartu" aria-label="Ubah nama kartu">
+            <Pencil size={13} />
+          </button>
+        )}
+        <button style={styles.cardDelete} onClick={onRequestDelete} title="Hapus kartu" aria-label="Hapus kartu">
+          <X size={14} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1770,7 +1873,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
     // explicitly picked from the chip list — if members were chosen
     // (by an admin), that explicit choice is respected as-is.
     const involvedMembers = dr.involvedMembers.length > 0 ? dr.involvedMembers : currentUsername ? [currentUsername] : [];
-    const createdAt = dr.startDate ? dateInputToTimestamp(dr.startDate) : undefined;
+    const createdAt = resolveManualCreatedAt(dr.startDate);
     onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty, createdAt);
     setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" } }));
   };
@@ -1821,22 +1924,23 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                 if (!card) return null;
                 const info = getDurationInfo(card);
                 const involved = card.involvedMembers || [];
+                const accentColor = info ? (info.status === "overdue" ? "#B4402C" : info.status === "due_soon" ? "#C48A2E" : "#5B7553") : "transparent";
                 return (
-                  <div key={cid} draggable onDragStart={() => setDragCard({ cardId: cid, colId: col.id })} onDragEnd={() => setDragCard(null)} style={styles.card}>
-                    <div style={styles.cardTop}>
-                      <label style={styles.checkLabel}>
-                        <input type="checkbox" checked={!!card.checked} onChange={() => onToggleCheck(board.id, col.id, cid)} style={styles.checkbox} />
-                        <span style={{ ...styles.cardText, ...(card.checked ? styles.cardTextDone : {}) }}>{card.text}</span>
-                      </label>
-                      <button
-                        style={styles.cardDelete}
-                        onClick={() => {
-                          onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, col.id, cid));
-                        }}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
+                  <div
+                    key={cid}
+                    draggable
+                    onDragStart={() => setDragCard({ cardId: cid, colId: col.id })}
+                    onDragEnd={() => setDragCard(null)}
+                    className="rw-card"
+                    style={{ ...styles.card, borderLeft: `3px solid ${accentColor}` }}
+                  >
+                    <CardTitle
+                      text={card.text}
+                      checked={card.checked}
+                      onToggleCheck={() => onToggleCheck(board.id, col.id, cid)}
+                      onSave={(newText) => onUpdateCard(board.id, cid, { text: newText })}
+                      onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, col.id, cid))}
+                    />
 
                     <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, cid, { createdAt: ts })} />
 
@@ -1894,7 +1998,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                     onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
                     title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
                   />
-                  <span style={styles.durationHint}>{draft(col.id).startDate ? "mulai 08:00 di tanggal ini" : "kosongkan = hari ini"}</span>
+                  <span style={styles.durationHint}>{startDateHint(draft(col.id).startDate)}</span>
                 </div>
 
                 <TypeSelect
@@ -1959,20 +2063,64 @@ function NoteView({ note, onUpdate }) {
 }
 
 function InsightView({ wsData }) {
+  const [typeFilter, setTypeFilter] = useState("__all__");
+
   let done = 0;
   let inProgress = 0;
   let todo = 0;
+
+  // Per jenis kartu: total kartu + rincian statusnya, dihitung dari seluruh
+  // papan (kolom pertama = belum dikerjakan, kedua = sedang dikerjakan,
+  // ketiga = selesai — sama seperti konvensi ringkasan utama di atas).
+  const typeStats = {};
+  // Per tim/anggota: hanya menghitung kartu yang sedang dikerjakan & yang
+  // sudah selesai, mengikuti filter jenis kartu yang dipilih.
+  const memberStats = {};
+
   wsData.boardOrder.forEach((bid) => {
     const board = wsData.boards[bid];
     if (!board) return;
     if (board.columns[0]) todo += board.columns[0].cardIds.length;
     if (board.columns[1]) inProgress += board.columns[1].cardIds.length;
     if (board.columns[2]) done += board.columns[2].cardIds.length;
+
+    board.columns.forEach((col, idx) => {
+      col.cardIds.forEach((cid) => {
+        const card = board.cards[cid];
+        if (!card) return;
+        const type = card.cardType || "Belum ditentukan";
+
+        if (!typeStats[type]) typeStats[type] = { todo: 0, inProgress: 0, done: 0, total: 0 };
+        typeStats[type].total += 1;
+        if (idx === 0) typeStats[type].todo += 1;
+        else if (idx === 1) typeStats[type].inProgress += 1;
+        else if (idx === 2) typeStats[type].done += 1;
+
+        if (idx === 1 || idx === 2) {
+          if (typeFilter !== "__all__" && type !== typeFilter) return;
+          const involved = card.involvedMembers && card.involvedMembers.length ? card.involvedMembers : [];
+          involved.forEach((name) => {
+            if (!memberStats[name]) memberStats[name] = { done: 0, inProgress: 0 };
+            if (idx === 2) memberStats[name].done += 1;
+            else memberStats[name].inProgress += 1;
+          });
+        }
+      });
+    });
   });
+
   const total = done + inProgress;
   const donePct = total ? Math.round((done / total) * 100) : 0;
   const inProgressPct = total ? 100 - donePct : 0;
   const boardCount = wsData.boardOrder.length;
+
+  const typeOptions = Array.from(new Set([...(wsData.cardTypes || []), ...Object.keys(typeStats)]));
+  const totalKartuKeseluruhan = Object.values(typeStats).reduce((s, v) => s + v.total, 0);
+  const selectedTypeStats = typeFilter === "__all__" ? null : typeStats[typeFilter] || { todo: 0, inProgress: 0, done: 0, total: 0 };
+
+  const memberRows = Object.entries(memberStats)
+    .map(([name, v]) => ({ name, ...v, total: v.done + v.inProgress }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
   const summaryText = (() => {
     if (total === 0 && todo === 0) return null;
@@ -2032,6 +2180,87 @@ function InsightView({ wsData }) {
           </div>
         </>
       )}
+
+      <div style={styles.insightSectionDivider} />
+
+      <div style={styles.insightSectionHeader}>
+        <h3 style={styles.insightSectionTitle}>
+          <Tags size={16} /> Total kartu per jenis
+        </h3>
+        <select style={styles.insightTypeSelect} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="__all__">Semua jenis ({totalKartuKeseluruhan})</option>
+          {typeOptions.map((t) => (
+            <option key={t} value={t}>
+              {t} ({typeStats[t] ? typeStats[t].total : 0})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {typeOptions.length === 0 ? (
+        <div style={styles.insightEmpty}>Belum ada kartu dengan jenis tertentu.</div>
+      ) : typeFilter === "__all__" ? (
+        <div style={styles.insightTypeGrid}>
+          {typeOptions.map((t) => (
+            <div key={t} style={styles.insightTypeCard}>
+              <div style={styles.insightTypeCardCount}>{typeStats[t] ? typeStats[t].total : 0}</div>
+              <div style={styles.insightTypeCardName}>{t}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={styles.insightTypeGrid}>
+          <div style={{ ...styles.insightTypeCard, ...styles.insightTypeCardHighlight }}>
+            <div style={styles.insightTypeCardCount}>{selectedTypeStats.total}</div>
+            <div style={styles.insightTypeCardName}>Total “{typeFilter}”</div>
+          </div>
+          <div style={styles.insightTypeCard}>
+            <div style={styles.insightTypeCardCount}>{selectedTypeStats.done}</div>
+            <div style={styles.insightTypeCardName}>Selesai</div>
+          </div>
+          <div style={styles.insightTypeCard}>
+            <div style={styles.insightTypeCardCount}>{selectedTypeStats.inProgress}</div>
+            <div style={styles.insightTypeCardName}>Sedang dikerjakan</div>
+          </div>
+          <div style={styles.insightTypeCard}>
+            <div style={styles.insightTypeCardCount}>{selectedTypeStats.todo}</div>
+            <div style={styles.insightTypeCardName}>Belum dikerjakan</div>
+          </div>
+        </div>
+      )}
+
+      <div style={styles.insightSectionDivider} />
+
+      <div style={styles.insightSectionHeader}>
+        <h3 style={styles.insightSectionTitle}>
+          <Users size={16} /> Progres per tim/anggota
+        </h3>
+      </div>
+      <div style={styles.insightSubtitleSmall}>
+        {typeFilter === "__all__" ? "Seluruh jenis kartu" : `Jenis kartu: ${typeFilter}`} · kartu sedang dikerjakan & selesai
+      </div>
+
+      {memberRows.length === 0 ? (
+        <div style={styles.insightEmpty}>Belum ada anggota yang tercatat pada kartu berjalan atau selesai.</div>
+      ) : (
+        <div style={styles.memberStatsTable}>
+          {memberRows.map((m) => {
+            const pct = m.total ? Math.round((m.done / m.total) * 100) : 0;
+            return (
+              <div key={m.name} style={styles.memberStatsRow}>
+                <div style={styles.memberStatsName}>{m.name}</div>
+                <div style={styles.memberStatsBarTrack}>
+                  <div style={{ ...styles.memberStatsBarFill, width: `${pct}%` }} />
+                </div>
+                <div style={styles.memberStatsNums}>
+                  <span style={styles.memberStatsDone}>{m.done} selesai</span>
+                  <span style={styles.memberStatsProgress}>{m.inProgress} dikerjakan</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -2072,7 +2301,7 @@ const styles = {
   wsHead: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", color: "#7D818C", padding: "0 4px" },
   wsHeadLabel: {},
   wsItem: { display: "flex", alignItems: "center", gap: 5, padding: "8px 10px", borderRadius: 5, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  wsItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff" },
+  wsItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #C48A2E" },
   wsBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, padding: "2px 6px", borderRadius: 10, background: "rgba(139,141,147,0.25)", color: "#B7B5AD", flexShrink: 0 },
   wsBadgeTeam: { background: "rgba(196,138,46,0.28)", color: "#E3B570" },
   iconBtnSmall: { background: "transparent", border: "none", color: "#9CB394", cursor: "pointer", display: "flex", alignItems: "center", padding: 2, flexShrink: 0 },
@@ -2085,7 +2314,7 @@ const styles = {
   createWsBtn: { background: "#5B7553", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
   divider: { height: 1, background: "rgba(255,255,255,0.08)", margin: "2px 0" },
   insightNavItem: { display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 6, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  insightNavItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff" },
+  insightNavItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #C48A2E" },
   tabGroup: { display: "flex", flexDirection: "column", gap: 6 },
   tab: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", padding: "6px 10px", borderRadius: "6px 6px 0 0", fontWeight: 500 },
   tabGold: { background: "rgba(196,138,46,0.18)", color: "#E3B570" },
@@ -2093,8 +2322,8 @@ const styles = {
   tabAdd: { background: "transparent", border: "1px solid currentColor", color: "inherit", borderRadius: 4, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
   list: { display: "flex", flexDirection: "column", gap: 2 },
   listItem: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 5, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  listItemActiveGold: { background: "rgba(196,138,46,0.28)", color: "#fff" },
-  listItemActiveMoss: { background: "rgba(91,117,83,0.32)", color: "#fff" },
+  listItemActiveGold: { background: "rgba(196,138,46,0.28)", color: "#fff", boxShadow: "inset 3px 0 0 #E3B570" },
+  listItemActiveMoss: { background: "rgba(91,117,83,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #9CB394" },
   listItemText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 },
   listItemDelete: { background: "transparent", border: "none", color: "inherit", opacity: 0.7, cursor: "pointer", padding: "0 2px", flexShrink: 0, display: "flex", alignItems: "center" },
   listEmpty: { fontSize: 12, color: "var(--text-muted)", padding: "6px 10px", fontStyle: "italic" },
@@ -2114,10 +2343,13 @@ const styles = {
   cardStack: { display: "flex", flexDirection: "column", gap: 8 },
   card: { background: "var(--surface-strong)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)" },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 },
-  checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1 },
+  cardTopActions: { display: "flex", alignItems: "center", gap: 2, flexShrink: 0 },
+  checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1, minWidth: 0 },
   checkbox: { marginTop: 3, cursor: "pointer", flexShrink: 0 },
-  cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700 },
+  cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700, wordBreak: "break-word" },
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
+  cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #C48A2E", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
+  cardEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
   typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
@@ -2154,13 +2386,31 @@ const styles = {
   noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "var(--text-faint)", marginBottom: 10 },
   noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" },
 
-  insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 640 },
+  insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 760 },
   insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
   insightSubtitle: { fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 14 },
+  insightSubtitleSmall: { fontSize: 12, color: "var(--text-faint)", marginBottom: 6 },
+  insightSectionDivider: { height: 1, background: "var(--card-border)", margin: "26px 0 18px" },
+  insightSectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 4 },
+  insightSectionTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: "'Fraunces', Georgia, serif", fontSize: 18, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
+  insightTypeSelect: { border: "1px solid var(--card-border)", borderRadius: 8, background: "var(--surface-solid)", color: "var(--text-primary)", fontSize: 12.5, padding: "7px 10px", outline: "none", cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  insightTypeGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, marginTop: 12 },
+  insightTypeCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 4 },
+  insightTypeCardHighlight: { borderColor: "#C48A2E", boxShadow: "0 0 0 1px #C48A2E inset" },
+  insightTypeCardCount: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
+  insightTypeCardName: { fontSize: 12, color: "var(--text-muted)", lineHeight: 1.35 },
+  memberStatsTable: { display: "flex", flexDirection: "column", gap: 10, marginTop: 12 },
+  memberStatsRow: { display: "flex", alignItems: "center", gap: 14, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "10px 16px" },
+  memberStatsName: { fontSize: 13, fontWeight: 600, color: "var(--text-primary)", width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  memberStatsBarTrack: { flex: 1, height: 8, borderRadius: 4, background: "var(--card-border)", overflow: "hidden", minWidth: 60 },
+  memberStatsBarFill: { height: "100%", background: "linear-gradient(90deg, #5B7553, #7FA06E)", borderRadius: 4, transition: "width 0.3s ease" },
+  memberStatsNums: { display: "flex", gap: 10, flexShrink: 0, fontSize: 11.5 },
+  memberStatsDone: { color: "#5B7553", fontWeight: 600, whiteSpace: "nowrap" },
+  memberStatsProgress: { color: "#9A6A15", fontWeight: 600, whiteSpace: "nowrap" },
   insightEmpty: { fontSize: 14, color: "var(--text-faint)", fontStyle: "italic", padding: "24px 0" },
   insightBody: { display: "flex", alignItems: "center", gap: 40, flexWrap: "wrap" },
-  donutOuter: { width: 220, height: 220, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  donutInner: { width: 150, height: 150, borderRadius: "50%", background: "var(--surface-solid)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.03)" },
+  donutOuter: { width: 220, height: 220, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 10px 26px rgba(35,38,43,0.14)" },
+  donutInner: { width: 150, height: 150, borderRadius: "50%", background: "var(--surface-solid)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.04)" },
   donutTotal: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 700, color: "var(--text-primary)" },
   donutTotalLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", marginTop: 2 },
   insightStats: { display: "flex", flexDirection: "column", gap: 14 },
