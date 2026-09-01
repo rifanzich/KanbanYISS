@@ -60,6 +60,23 @@ function formatCreatedDate(ts) {
   }
 }
 
+// Converts a timestamp to the "YYYY-MM-DD" shape a <input type="date"> needs,
+// using local calendar fields (not UTC) so the picker shows the day the
+// person actually chose.
+function toDateInputValue(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// A manually-picked date (past or future) always starts its countdown at
+// 08:00 local time on that day, so the duration/overdue math has a
+// consistent, predictable anchor regardless of what time it is right now.
+function dateInputToTimestamp(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 8, 0, 0, 0).getTime();
+}
+
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 const UNIT_MS = { menit: 60000, jam: 3600000, hari: 86400000 };
@@ -860,11 +877,15 @@ export default function RuangWorkspace() {
     });
   };
 
-  const addCard = (boardId, colId, text, duration, involvedMembers, cardType, qty) => {
+  const addCard = (boardId, colId, text, duration, involvedMembers, cardType, qty, createdAt) => {
     const finalText = (text && text.trim()) || cardType || "Kartu Baru";
     // Purely manual: whatever the person typed for jumlah is what gets stored.
     // No accumulation with other cards — default to 1 only when left empty.
     const finalQty = Number(qty) > 0 ? Number(qty) : 1;
+    // A manually chosen date (past or future) overrides "now" — this lets the
+    // person log something that already happened, or schedule the duration
+    // countdown to start on a future day at 08:00.
+    const finalCreatedAt = Number(createdAt) > 0 ? Number(createdAt) : Date.now();
     setWsData((d) => {
       const board = d.boards[boardId];
       const id = uid();
@@ -876,7 +897,7 @@ export default function RuangWorkspace() {
             ...board,
             cards: {
               ...board.cards,
-              [id]: { id, text: finalText, createdAt: Date.now(), duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false },
+              [id]: { id, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false },
             },
             columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: [...c.cardIds, id] } : c)),
           },
@@ -1674,11 +1695,64 @@ function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, o
   );
 }
 
+function CreatedDateEditor({ createdAt, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [draftDate, setDraftDate] = useState(() => toDateInputValue(createdAt));
+
+  useEffect(() => {
+    setDraftDate(toDateInputValue(createdAt));
+  }, [createdAt]);
+
+  const save = () => {
+    if (draftDate) {
+      const newTs = dateInputToTimestamp(draftDate);
+      if (newTs !== createdAt) onChange(newTs);
+    }
+    setEditing(false);
+  };
+
+  const cancel = () => {
+    setDraftDate(toDateInputValue(createdAt));
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={styles.startDateRow}>
+        <input
+          type="date"
+          style={styles.startDateInput}
+          value={draftDate}
+          autoFocus
+          onChange={(e) => setDraftDate(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+        />
+        <button style={styles.addTypeConfirmBtn} onClick={save} title="Simpan tanggal">
+          <Check size={12} />
+        </button>
+        <button style={styles.addTypeCancelBtn} onClick={cancel} title="Batal">
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.createdDateLabel}>
+      <Calendar size={11} />
+      <span>{formatCreatedDate(createdAt)}</span>
+      <button style={styles.dateEditBtn} onClick={() => setEditing(true)} title="Ubah tanggal mulai (boleh tanggal lampau atau mendatang)">
+        <Pencil size={11} />
+      </button>
+    </div>
+  );
+}
+
 function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
 
-  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 };
+  const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
 
   const toggleDraftMember = (colId, name) => {
@@ -1696,8 +1770,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
     // explicitly picked from the chip list — if members were chosen
     // (by an admin), that explicit choice is respected as-is.
     const involvedMembers = dr.involvedMembers.length > 0 ? dr.involvedMembers : currentUsername ? [currentUsername] : [];
-    onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty);
-    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1 } }));
+    const createdAt = dr.startDate ? dateInputToTimestamp(dr.startDate) : undefined;
+    onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty, createdAt);
+    setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" } }));
   };
 
   const toggleCardMember = (boardId, cid, currentList, name) => {
@@ -1763,10 +1838,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                       </button>
                     </div>
 
-                    <div style={styles.createdDateLabel}>
-                      <Calendar size={11} />
-                      <span>{formatCreatedDate(card.createdAt)}</span>
-                    </div>
+                    <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, cid, { createdAt: ts })} />
 
                     <TypeSelect
                       value={card.cardType}
@@ -1813,6 +1885,17 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
             {colIndex === 0 && (
               <div style={styles.addCardRow}>
                 <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
+
+                <div style={styles.startDateRow}>
+                  <input
+                    type="date"
+                    style={styles.startDateInput}
+                    value={draft(col.id).startDate}
+                    onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
+                    title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
+                  />
+                  <span style={styles.durationHint}>{draft(col.id).startDate ? "mulai 08:00 di tanggal ini" : "kosongkan = hari ini"}</span>
+                </div>
 
                 <TypeSelect
                   value={draft(col.id).cardType}
@@ -2043,6 +2126,7 @@ const styles = {
   assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
   createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-faint)" },
+  dateEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center", padding: 0, marginLeft: 2 },
   involvedLabel: { fontSize: 10.5, color: "var(--text-faint)", marginTop: 2 },
   chipRow: { display: "flex", flexWrap: "wrap", gap: 5 },
   chip: { border: "1px solid var(--card-border)", background: "var(--surface-strong)", color: "var(--text-muted)", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
@@ -2058,6 +2142,8 @@ const styles = {
   addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box", color: "var(--text-primary)" },
   durationRow: { display: "flex", gap: 6 },
   durationInput: { width: 60, border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
+  startDateRow: { display: "flex", alignItems: "center", gap: 6 },
+  startDateInput: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)", fontFamily: "'IBM Plex Mono', monospace" },
   durationSelect: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 4px", fontSize: 12, outline: "none", background: "var(--input-bg)", color: "var(--text-primary)" },
   durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
   durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
