@@ -1059,7 +1059,10 @@ export default function RuangWorkspace() {
         const targetIndex = colIndex + 1;
         columns = mb.columns.map((c, i) => {
           if (c.id === colId) return { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) };
-          if (i === targetIndex) return { ...c, cardIds: [...c.cardIds, cardId] };
+          // Kartu yang baru dicentang selalu masuk ke urutan paling atas
+          // kolom tujuan (Sedang Dikerjakan / Selesai) — kartu lama di
+          // kolom itu otomatis turun, sama seperti kartu yang baru dibuat.
+          if (i === targetIndex) return { ...c, cardIds: [cardId, ...c.cardIds] };
           return c;
         });
         const clearDuration = targetIndex === 2;
@@ -2051,7 +2054,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
       </div>
 
       <div className="rw-columns-row" style={styles.columnsRow}>
-        {monthBoard.columns.map((col) => (
+        {monthBoard.columns.map((col, colIndex) => (
           <div
             key={col.id}
             className="rw-column"
@@ -2150,60 +2153,62 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
               })}
             </div>
 
-            <div style={styles.addCardRow}>
-              <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
+            {colIndex === 0 && (
+              <div style={styles.addCardRow}>
+                <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
 
-              <div style={styles.startDateRow}>
-                <input
-                  type="date"
-                  style={styles.startDateInput}
-                  value={draft(col.id).startDate}
-                  onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
-                  title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
-                />
-                <span style={styles.durationHint}>{startDateHint(draft(col.id).startDate)}</span>
-              </div>
-
-              <TypeSelect
-                value={draft(col.id).cardType}
-                options={cardTypes}
-                qty={draft(col.id).qty}
-                onChange={(v) => setDraft(col.id, { cardType: v })}
-                onQtyChange={(v) => setDraft(col.id, { qty: v })}
-                onAddOption={onAddCardType}
-              />
-
-              {isAdmin ? (
-                <div>
-                  <div style={styles.involvedLabel}>Tim terlibat</div>
-                  <div style={styles.chipRow}>
-                    {members.map((m) => {
-                      const active = draft(col.id).involvedMembers.includes(m);
-                      return (
-                        <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(col.id, m)}>
-                          {m}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div style={styles.startDateRow}>
+                  <input
+                    type="date"
+                    style={styles.startDateInput}
+                    value={draft(col.id).startDate}
+                    onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
+                    title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
+                  />
+                  <span style={styles.durationHint}>{startDateHint(draft(col.id).startDate)}</span>
                 </div>
-              ) : (
-                <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
-              )}
 
-              <div className="rw-duration-row" style={styles.durationRow}>
-                <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
-                <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
-                  <option value="menit">Menit</option>
-                  <option value="jam">Jam</option>
-                  <option value="hari">Hari</option>
-                </select>
-                <span style={styles.durationHint}>kosongkan = 1 hari</span>
-                <button style={styles.submitCardBtn} onClick={() => submit(col.id)} title="Tambahkan kartu" aria-label="Tambahkan kartu">
-                  <Plus size={16} />
-                </button>
+                <TypeSelect
+                  value={draft(col.id).cardType}
+                  options={cardTypes}
+                  qty={draft(col.id).qty}
+                  onChange={(v) => setDraft(col.id, { cardType: v })}
+                  onQtyChange={(v) => setDraft(col.id, { qty: v })}
+                  onAddOption={onAddCardType}
+                />
+
+                {isAdmin ? (
+                  <div>
+                    <div style={styles.involvedLabel}>Tim terlibat</div>
+                    <div style={styles.chipRow}>
+                      {members.map((m) => {
+                        const active = draft(col.id).involvedMembers.includes(m);
+                        return (
+                          <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(col.id, m)}>
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
+                )}
+
+                <div className="rw-duration-row" style={styles.durationRow}>
+                  <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
+                  <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
+                    <option value="menit">Menit</option>
+                    <option value="jam">Jam</option>
+                    <option value="hari">Hari</option>
+                  </select>
+                  <span style={styles.durationHint}>kosongkan = 1 hari</span>
+                  <button style={styles.submitCardBtn} onClick={() => submit(col.id)} title="Tambahkan kartu" aria-label="Tambahkan kartu">
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         ))}
         <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id, viewMonth)}>
