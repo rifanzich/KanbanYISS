@@ -103,12 +103,61 @@ const UNIT_MS = { menit: 60000, jam: 3600000, hari: 86400000 };
 const UNIT_LABEL = { menit: "menit", jam: "jam", hari: "hari" };
 const DUE_SOON_MS = 12 * UNIT_MS.jam;
 
+// ---- Month helpers (papan bulanan) ----
+// Each board now keeps a separate set of columns/cards per calendar month
+// ("monthly"), so switching months shows a genuinely different board while
+// past months stay exactly as they were left.
+const MONTH_NAMES_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+function monthKeyOf(year, monthIndex0) {
+  return `${year}-${String(monthIndex0 + 1).padStart(2, "0")}`;
+}
+function currentMonthKey() {
+  const d = new Date();
+  return monthKeyOf(d.getFullYear(), d.getMonth());
+}
+function monthKeyFromTimestamp(ts) {
+  const d = new Date(ts);
+  return monthKeyOf(d.getFullYear(), d.getMonth());
+}
+function parseMonthKey(key) {
+  const [y, m] = key.split("-").map(Number);
+  return { year: y, monthIndex0: m - 1 };
+}
+function monthKeyLabel(key) {
+  const { year, monthIndex0 } = parseMonthKey(key);
+  return `${MONTH_NAMES_ID[monthIndex0]} ${year}`;
+}
+function shiftMonthKey(key, delta) {
+  const { year, monthIndex0 } = parseMonthKey(key);
+  const d = new Date(year, monthIndex0 + delta, 1);
+  return monthKeyOf(d.getFullYear(), d.getMonth());
+}
+function defaultColumnsTemplate(seed) {
+  const s = seed || uid();
+  return [
+    { id: `${s}-c0`, name: "Belum Dikerjakan", cardIds: [] },
+    { id: `${s}-c1`, name: "Sedang Dikerjakan", cardIds: [] },
+    { id: `${s}-c2`, name: "Selesai", cardIds: [] },
+  ];
+}
+// Returns the month's board (columns+cards), or a fresh (not yet persisted)
+// one seeded deterministically from the month key — so every caller asking
+// about the same never-visited month sees the exact same column ids, instead
+// of a fresh random set each time (which would break renaming/moving/adding
+// before that month has been "touched" for the first time).
+function getMonthBoard(board, monthKey) {
+  if (board.monthly && board.monthly[monthKey]) return board.monthly[monthKey];
+  return { columns: defaultColumnsTemplate(monthKey), cards: {} };
+}
+
 const emptyWorkspaceData = () => ({
   boards: {},
   boardOrder: [],
   notes: {},
   noteOrder: [],
   cardTypes: [...DEFAULT_CARD_TYPES],
+  calendarNotes: {},
   active: { type: "none" },
 });
 
@@ -122,14 +171,18 @@ const sampleWorkspaceData = () => {
       [boardId]: {
         id: boardId,
         name: "Papan Pertama",
-        columns: [
-          { id: col1, name: "Belum Dikerjakan", cardIds: [card1] },
-          { id: col2, name: "Sedang Dikerjakan", cardIds: [card2] },
-          { id: col3, name: "Selesai", cardIds: [] },
-        ],
-        cards: {
-          [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: [], cardType: "Video Semenit", qty: 1, checked: false },
-          [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: [], cardType: "Poster Dakwah", qty: 1, checked: false },
+        monthly: {
+          [currentMonthKey()]: {
+            columns: [
+              { id: col1, name: "Belum Dikerjakan", cardIds: [card1] },
+              { id: col2, name: "Sedang Dikerjakan", cardIds: [card2] },
+              { id: col3, name: "Selesai", cardIds: [] },
+            ],
+            cards: {
+              [card1]: { id: card1, text: "Centang kartu ini untuk pindah otomatis", createdAt: now, duration: null, involvedMembers: [], cardType: "Video Semenit", qty: 1, checked: false },
+              [card2]: { id: card2, text: "Centang di sini untuk tandai selesai", createdAt: now, duration: { amount: 10, unit: "jam" }, involvedMembers: [], cardType: "Poster Dakwah", qty: 1, checked: false },
+            },
+          },
         },
       },
     },
@@ -137,6 +190,7 @@ const sampleWorkspaceData = () => {
     notes: {},
     noteOrder: [],
     cardTypes: [...DEFAULT_CARD_TYPES],
+    calendarNotes: {},
     active: { type: "board", id: boardId },
   };
 };
@@ -144,22 +198,38 @@ const sampleWorkspaceData = () => {
 function normalizeWsData(raw) {
   const base = raw ? raw : emptyWorkspaceData();
   const cardTypes = base.cardTypes && base.cardTypes.length ? base.cardTypes : [...DEFAULT_CARD_TYPES];
+  const calendarNotes = base.calendarNotes || {};
   const boards = { ...(base.boards || {}) };
-  Object.keys(boards).forEach((bid) => {
-    const board = boards[bid];
-    const cards = { ...board.cards };
+
+  // Normalizes one month's { columns, cards } bucket: fills in defaults that
+  // older cards may be missing (involvedMembers/cardType/qty).
+  const normalizeMonthBoard = (monthBoard) => {
+    const cards = { ...(monthBoard.cards || {}) };
     Object.keys(cards).forEach((cid) => {
       const card = cards[cid];
       const involvedMembers = card.involvedMembers ? card.involvedMembers : card.assignee ? [card.assignee] : [];
-      // "qty" is a purely manual count next to the type dropdown — it never
-      // aggregates across cards of the same type. Existing cards without one
-      // default to 1, same as newly created cards.
       const qty = Number(card.qty) > 0 ? Number(card.qty) : 1;
       cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "", qty };
     });
-    boards[bid] = { ...board, cards };
+    return { columns: monthBoard.columns || [], cards };
+  };
+
+  Object.keys(boards).forEach((bid) => {
+    const board = boards[bid];
+    let monthly = board.monthly ? { ...board.monthly } : null;
+    // Legacy shape (pre-month-feature): the board's cards/columns lived at
+    // the top level. Migrate them into the CURRENT month so nothing is
+    // reset — existing work stays exactly where it was left.
+    if (!monthly) {
+      monthly = { [currentMonthKey()]: { columns: board.columns || defaultColumnsTemplate(), cards: board.cards || {} } };
+    }
+    Object.keys(monthly).forEach((mk) => {
+      monthly[mk] = normalizeMonthBoard(monthly[mk]);
+    });
+    boards[bid] = { id: board.id, name: board.name, monthly };
   });
-  return { ...base, cardTypes, boards };
+
+  return { ...base, cardTypes, calendarNotes, boards };
 }
 
 function useDebouncedSave(key, value, shared, ready) {
@@ -204,12 +274,15 @@ function getDurationInfo(card) {
 function collectUrgentCards(wsData) {
   const overdue = [];
   const dueSoon = [];
+  const mk = currentMonthKey();
   wsData.boardOrder.forEach((bid) => {
     const board = wsData.boards[bid];
     if (!board) return;
-    board.columns.forEach((col) => {
+    const monthBoard = board.monthly && board.monthly[mk];
+    if (!monthBoard) return;
+    monthBoard.columns.forEach((col) => {
       col.cardIds.forEach((cid) => {
-        const card = board.cards[cid];
+        const card = monthBoard.cards[cid];
         if (!card || !card.duration) return;
         const info = getDurationInfo(card);
         if (!info) return;
@@ -232,36 +305,40 @@ function buildAndDownloadWorkbook(wsName, data) {
   const usedNames = new Set();
   (data.boardOrder || []).forEach((bid) => {
     const board = data.boards[bid];
-    if (!board) return;
-    const rows = [];
-    board.columns.forEach((col) => {
-      col.cardIds.forEach((cid) => {
-        const card = board.cards[cid];
-        if (!card) return;
-        const info = getDurationInfo(card);
-        rows.push({
-          Kolom: col.name,
-          "Jenis Kartu": card.cardType || "",
-          Jumlah: Number(card.qty) > 0 ? Number(card.qty) : 1,
-          Kartu: card.text,
-          "Tim Terlibat": (card.involvedMembers || []).join(", "),
-          "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
-          Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : "",
-          "Dibuat pada": formatCreatedDate(card.createdAt),
+    if (!board || !board.monthly) return;
+    const monthKeys = Object.keys(board.monthly).sort();
+    monthKeys.forEach((mk) => {
+      const monthBoard = board.monthly[mk];
+      const rows = [];
+      (monthBoard.columns || []).forEach((col) => {
+        col.cardIds.forEach((cid) => {
+          const card = monthBoard.cards[cid];
+          if (!card) return;
+          const info = getDurationInfo(card);
+          rows.push({
+            Kolom: col.name,
+            "Jenis Kartu": card.cardType || "",
+            Jumlah: Number(card.qty) > 0 ? Number(card.qty) : 1,
+            Kartu: card.text,
+            "Tim Terlibat": (card.involvedMembers || []).join(", "),
+            "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
+            Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : "",
+            "Dibuat pada": formatCreatedDate(card.createdAt),
+          });
         });
       });
+      let sheetName = sanitizeSheetName(`${board.name} ${monthKeyLabel(mk)}`);
+      let i = 2;
+      while (usedNames.has(sheetName)) {
+        sheetName = sanitizeSheetName(`${board.name} ${monthKeyLabel(mk)} ${i}`);
+        i++;
+      }
+      usedNames.add(sheetName);
+      const ws = XLSX.utils.json_to_sheet(
+        rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Jumlah: "", Kartu: "(belum ada kartu)", "Tim Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
+      );
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
-    let sheetName = sanitizeSheetName(board.name);
-    let i = 2;
-    while (usedNames.has(sheetName)) {
-      sheetName = sanitizeSheetName(`${board.name}${i}`);
-      i++;
-    }
-    usedNames.add(sheetName);
-    const ws = XLSX.utils.json_to_sheet(
-      rows.length ? rows : [{ Kolom: "", "Jenis Kartu": "", Jumlah: "", Kartu: "(belum ada kartu)", "Tim Terlibat": "", "Durasi Target": "", Status: "", "Dibuat pada": "" }]
-    );
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
   if ((data.noteOrder || []).length) {
     const noteRows = data.noteOrder.map((nid) => {
@@ -356,6 +433,17 @@ const RESPONSIVE_CSS = `
   .rw-duration-row { flex-wrap: wrap; }
 }
 `;
+
+// Looks up which column currently holds a card inside one month's board —
+// used so calendar notes can toggle/locate the card they're linked to
+// without needing to remember its column (which can change as it moves).
+function findCardLocation(board, monthKey, cardId) {
+  const monthBoard = getMonthBoard(board, monthKey);
+  for (const col of monthBoard.columns) {
+    if (col.cardIds.includes(cardId)) return { colId: col.id, card: monthBoard.cards[cardId] };
+  }
+  return null;
+}
 
 function LogoMark({ size = 22 }) {
   return (
@@ -824,7 +912,8 @@ export default function RuangWorkspace() {
   const activeBoard = wsData.active.type === "board" ? wsData.boards[wsData.active.id] : null;
   const activeNote = wsData.active.type === "note" ? wsData.notes[wsData.active.id] : null;
   const activeInsight = wsData.active.type === "insight";
-  const currentTitle = activeBoard ? activeBoard.name : activeNote ? activeNote.title || "Tanpa judul" : activeInsight ? "Insight" : "Kanban YISS";
+  const activeCalendar = wsData.active.type === "calendar";
+  const currentTitle = activeBoard ? activeBoard.name : activeNote ? activeNote.title || "Tanpa judul" : activeInsight ? "Insight" : activeCalendar ? "Kalender" : "Kanban YISS";
   const { overdue, dueSoon } = collectUrgentCards(wsData);
   const urgentCount = overdue.length + dueSoon.length;
 
@@ -841,10 +930,9 @@ export default function RuangWorkspace() {
     setWsData((d) => (d.cardTypes.includes(trimmed) ? d : { ...d, cardTypes: [...d.cardTypes, trimmed] }));
   };
 
-  // ---- Board actions ----
+  // ---- Board actions (semua beroperasi pada bulan yang sedang dilihat) ----
   const addBoard = () => {
     const id = uid();
-    const c1 = uid(), c2 = uid(), c3 = uid();
     setWsData((d) => ({
       ...d,
       boards: {
@@ -852,12 +940,7 @@ export default function RuangWorkspace() {
         [id]: {
           id,
           name: "Papan Baru",
-          columns: [
-            { id: c1, name: "Belum Dikerjakan", cardIds: [] },
-            { id: c2, name: "Sedang Dikerjakan", cardIds: [] },
-            { id: c3, name: "Selesai", cardIds: [] },
-          ],
-          cards: {},
+          monthly: { [currentMonthKey()]: { columns: defaultColumnsTemplate(), cards: {} } },
         },
       },
       boardOrder: [...d.boardOrder, id],
@@ -884,119 +967,97 @@ export default function RuangWorkspace() {
     setWsData((d) => ({ ...d, boards: { ...d.boards, [id]: { ...d.boards[id], name } } }));
   };
 
-  const addColumn = (boardId) => {
+  // Small helper so every month-scoped mutation shares the same "read this
+  // month's bucket (or a fresh one), patch it, write it back" shape.
+  const patchMonthBoard = (boardId, monthKey, updater) => {
     setWsData((d) => {
       const board = d.boards[boardId];
-      const id = uid();
-      return {
-        ...d,
-        boards: { ...d.boards, [boardId]: { ...board, columns: [...board.columns, { id, name: "Kolom Baru", cardIds: [] }] } },
-      };
+      if (!board) return d;
+      const monthBoard = getMonthBoard(board, monthKey);
+      const updatedMonthBoard = updater(monthBoard);
+      if (updatedMonthBoard === null) return d;
+      return { ...d, boards: { ...d.boards, [boardId]: { ...board, monthly: { ...(board.monthly || {}), [monthKey]: updatedMonthBoard } } } };
     });
   };
 
-  const renameColumn = (boardId, colId, name) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      return {
-        ...d,
-        boards: { ...d.boards, [boardId]: { ...board, columns: board.columns.map((c) => (c.id === colId ? { ...c, name } : c)) } },
-      };
+  const addColumn = (boardId, monthKey) => {
+    patchMonthBoard(boardId, monthKey, (mb) => ({ ...mb, columns: [...mb.columns, { id: uid(), name: "Kolom Baru", cardIds: [] }] }));
+  };
+
+  const renameColumn = (boardId, monthKey, colId, name) => {
+    patchMonthBoard(boardId, monthKey, (mb) => ({ ...mb, columns: mb.columns.map((c) => (c.id === colId ? { ...c, name } : c)) }));
+  };
+
+  const deleteColumn = (boardId, monthKey, colId) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const col = mb.columns.find((c) => c.id === colId);
+      const cards = { ...mb.cards };
+      if (col) col.cardIds.forEach((cid) => delete cards[cid]);
+      return { ...mb, columns: mb.columns.filter((c) => c.id !== colId), cards };
     });
   };
 
-  const deleteColumn = (boardId, colId) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      const col = board.columns.find((c) => c.id === colId);
-      const cards = { ...board.cards };
-      col.cardIds.forEach((cid) => delete cards[cid]);
-      return {
-        ...d,
-        boards: { ...d.boards, [boardId]: { ...board, columns: board.columns.filter((c) => c.id !== colId), cards } },
-      };
-    });
-  };
-
-  const addCard = (boardId, colId, text, duration, involvedMembers, cardType, qty, createdAt) => {
+  // Returns the new card's id synchronously (the id is minted before the
+  // state update, not inside it) so callers — like the calendar sync — can
+  // immediately remember which card they just created.
+  const addCard = (boardId, monthKey, colId, text, duration, involvedMembers, cardType, qty, createdAt) => {
     const finalText = (text && text.trim()) || cardType || "Kartu Baru";
-    // Purely manual: whatever the person typed for jumlah is what gets stored.
-    // No accumulation with other cards — default to 1 only when left empty.
     const finalQty = Number(qty) > 0 ? Number(qty) : 1;
-    // A manually chosen date (past or future) overrides "now" — this lets the
-    // person log something that already happened, or schedule the duration
-    // countdown to start on a future day at 08:00.
     const finalCreatedAt = Number(createdAt) > 0 ? Number(createdAt) : Date.now();
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      const id = uid();
+    const newId = uid();
+    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false };
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      // Falls back to the first column if colId doesn't match anything in
+      // this month's bucket (e.g. a calendar note aimed at a month that's
+      // never been opened before) — so the card never silently disappears.
+      const targetColId = mb.columns.some((c) => c.id === colId) ? colId : mb.columns[0] && mb.columns[0].id;
       return {
-        ...d,
-        boards: {
-          ...d.boards,
-          [boardId]: {
-            ...board,
-            cards: {
-              ...board.cards,
-              [id]: { id, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false },
-            },
-            columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: [...c.cardIds, id] } : c)),
-          },
-        },
+        ...mb,
+        cards: { ...mb.cards, [newId]: newCard },
+        // Kartu baru selalu ditaruh paling atas kolom — kartu lama otomatis turun.
+        columns: mb.columns.map((c) => (c.id === targetColId ? { ...c, cardIds: [newId, ...c.cardIds] } : c)),
       };
     });
+    return newId;
   };
 
-  const deleteCard = (boardId, colId, cardId) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      const cards = { ...board.cards };
+  // Removes the card from whichever column currently holds it, so callers
+  // (including calendar notes) don't need to track its column separately.
+  const deleteCard = (boardId, monthKey, cardId) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const cards = { ...mb.cards };
       delete cards[cardId];
-      return {
-        ...d,
-        boards: {
-          ...d.boards,
-          [boardId]: { ...board, cards, columns: board.columns.map((c) => (c.id === colId ? { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) } : c)) },
-        },
-      };
+      return { ...mb, cards, columns: mb.columns.map((c) => ({ ...c, cardIds: c.cardIds.filter((id) => id !== cardId) })) };
     });
   };
 
-  const moveCard = (boardId, fromCol, toCol, cardId) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      const columns = board.columns.map((c) => {
-        if (c.id === fromCol) return { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) };
-        return c;
-      });
-      const finalColumns = columns.map((c) => {
-        if (c.id === toCol && !c.cardIds.includes(cardId)) return { ...c, cardIds: [...c.cardIds, cardId] };
-        return c;
-      });
-      return { ...d, boards: { ...d.boards, [boardId]: { ...board, columns: finalColumns } } };
+  const moveCard = (boardId, monthKey, fromCol, toCol, cardId) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const columns = mb.columns.map((c) => (c.id === fromCol ? { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) } : c));
+      const finalColumns = columns.map((c) => (c.id === toCol && !c.cardIds.includes(cardId) ? { ...c, cardIds: [...c.cardIds, cardId] } : c));
+      return { ...mb, columns: finalColumns };
     });
   };
 
-  const updateCard = (boardId, cardId, patch) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      return { ...d, boards: { ...d.boards, [boardId]: { ...board, cards: { ...board.cards, [cardId]: { ...board.cards[cardId], ...patch } } } } };
+  const updateCard = (boardId, monthKey, cardId, patch) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      if (!mb.cards[cardId]) return null;
+      return { ...mb, cards: { ...mb.cards, [cardId]: { ...mb.cards[cardId], ...patch } } };
     });
   };
 
-  const toggleCheck = (boardId, colId, cardId) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      const colIndex = board.columns.findIndex((c) => c.id === colId);
-      const card = board.cards[cardId];
-      if (!card) return d;
+  const toggleCheck = (boardId, monthKey, colId, cardId) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const colIndex = mb.columns.findIndex((c) => c.id === colId);
+      const card = mb.cards[cardId];
+      if (!card) return null;
       const newChecked = !card.checked;
-      let cards = { ...board.cards, [cardId]: { ...card, checked: newChecked } };
-      let columns = board.columns;
+      let cards = { ...mb.cards, [cardId]: { ...card, checked: newChecked } };
+      let columns = mb.columns;
 
-      if (newChecked && colIndex >= 0 && colIndex <= 1 && colIndex < board.columns.length - 1) {
+      if (newChecked && colIndex >= 0 && colIndex <= 1 && colIndex < mb.columns.length - 1) {
         const targetIndex = colIndex + 1;
-        columns = board.columns.map((c, i) => {
+        columns = mb.columns.map((c, i) => {
           if (c.id === colId) return { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) };
           if (i === targetIndex) return { ...c, cardIds: [...c.cardIds, cardId] };
           return c;
@@ -1004,8 +1065,46 @@ export default function RuangWorkspace() {
         const clearDuration = targetIndex === 2;
         cards = { ...cards, [cardId]: { ...cards[cardId], checked: false, duration: clearDuration ? null : cards[cardId].duration } };
       }
-      return { ...d, boards: { ...d.boards, [boardId]: { ...board, columns, cards } } };
+      return { ...mb, columns, cards };
     });
+  };
+
+  // ---- Kalender (annual plan) actions ----
+  // Menambahkan catatan pada tanggal tertentu otomatis membuat kartu asli di
+  // papan yang dipilih, pada bulan sesuai tanggal itu, kolom pertama — persis
+  // seperti menambah kartu langsung dari papan.
+  const addCalendarNote = (dateStr, boardId, text, cardType) => {
+    const board = wsData.boards[boardId];
+    if (!board || !text.trim()) return;
+    const monthKey = monthKeyFromTimestamp(dateInputToTimestamp(dateStr));
+    const monthBoard = getMonthBoard(board, monthKey);
+    const firstCol = monthBoard.columns[0];
+    if (!firstCol) return;
+    const cardId = addCard(boardId, monthKey, firstCol.id, text, null, currentUser ? [currentUser.username] : [], cardType || "", 1, dateInputToTimestamp(dateStr));
+    const noteId = uid();
+    setWsData((d) => {
+      const list = d.calendarNotes[dateStr] || [];
+      return { ...d, calendarNotes: { ...d.calendarNotes, [dateStr]: [...list, { id: noteId, boardId, monthKey, cardId }] } };
+    });
+  };
+
+  const deleteCalendarNote = (dateStr, note) => {
+    deleteCard(note.boardId, note.monthKey, note.cardId);
+    setWsData((d) => {
+      const list = (d.calendarNotes[dateStr] || []).filter((n) => n.id !== note.id);
+      const calendarNotes = { ...d.calendarNotes };
+      if (list.length) calendarNotes[dateStr] = list;
+      else delete calendarNotes[dateStr];
+      return { ...d, calendarNotes };
+    });
+  };
+
+  const toggleCalendarNote = (note) => {
+    const board = wsData.boards[note.boardId];
+    if (!board) return;
+    const loc = findCardLocation(board, note.monthKey, note.cardId);
+    if (!loc) return;
+    toggleCheck(note.boardId, note.monthKey, loc.colId, note.cardId);
   };
 
   // ---- Note actions ----
@@ -1121,6 +1220,10 @@ export default function RuangWorkspace() {
           setActive({ type: "insight" });
           closeSidebar();
         }}
+        onSelectCalendar={() => {
+          setActive({ type: "calendar" });
+          closeSidebar();
+        }}
         onAddBoard={addBoard}
         onAddNote={addNote}
         onDeleteBoard={deleteBoard}
@@ -1154,7 +1257,17 @@ export default function RuangWorkspace() {
         )}
         {activeNote && <NoteView note={activeNote} onUpdate={updateNote} />}
         {activeInsight && <InsightView wsData={wsData} />}
-        {!activeBoard && !activeNote && !activeInsight && (
+        {activeCalendar && (
+          <CalendarView
+            wsData={wsData}
+            currentUsername={currentUser.username}
+            onAddNote={addCalendarNote}
+            onDeleteNote={deleteCalendarNote}
+            onToggleNote={toggleCalendarNote}
+            onRequestConfirm={requestConfirm}
+          />
+        )}
+        {!activeBoard && !activeNote && !activeInsight && !activeCalendar && (
           <div style={styles.empty}>
             <div style={styles.emptyTitle}>Belum ada yang dipilih</div>
             <div style={styles.emptyText}>Buat papan untuk melacak pekerjaan, atau catatan untuk menulis ide.</div>
@@ -1307,6 +1420,7 @@ function Sidebar({
   onSelectBoard,
   onSelectNote,
   onSelectInsight,
+  onSelectCalendar,
   onAddBoard,
   onAddNote,
   onDeleteBoard,
@@ -1551,6 +1665,14 @@ function Sidebar({
       >
         <PieChart size={15} />
         <span>Insight</span>
+      </div>
+
+      <div
+        style={{ ...styles.insightNavItem, ...(wsData.active.type === "calendar" ? styles.insightNavItemActive : {}) }}
+        onClick={onSelectCalendar}
+      >
+        <Calendar size={15} />
+        <span>Kalender</span>
       </div>
 
       <div style={styles.divider} />
@@ -1854,6 +1976,13 @@ function CardTitle({ text, checked, onToggleCheck, onSave, onRequestDelete }) {
 function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
+  // Papan bulanan: setiap bulan punya kolom & kartunya sendiri. Dibuka
+  // default ke bulan berjalan; berpindah bulan hanya mengganti tampilan,
+  // bulan lain tetap tersimpan persis seperti terakhir ditinggalkan.
+  const [viewMonth, setViewMonth] = useState(() => currentMonthKey());
+  const monthBoard = getMonthBoard(board, viewMonth);
+  const thisMonthKey = currentMonthKey();
+  const { year: viewYear } = parseMonthKey(viewMonth);
 
   const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
@@ -1874,20 +2003,49 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
     // (by an admin), that explicit choice is respected as-is.
     const involvedMembers = dr.involvedMembers.length > 0 ? dr.involvedMembers : currentUsername ? [currentUsername] : [];
     const createdAt = resolveManualCreatedAt(dr.startDate);
-    onAddCard(board.id, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty, createdAt);
+    onAddCard(board.id, viewMonth, colId, dr.text, duration, involvedMembers, dr.cardType, dr.qty, createdAt);
     setDrafts((d) => ({ ...d, [colId]: { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" } }));
   };
 
   const toggleCardMember = (boardId, cid, currentList, name) => {
     const has = currentList.includes(name);
-    onUpdateCard(boardId, cid, { involvedMembers: has ? currentList.filter((m) => m !== name) : [...currentList, name] });
+    onUpdateCard(boardId, viewMonth, cid, { involvedMembers: has ? currentList.filter((m) => m !== name) : [...currentList, name] });
   };
 
   return (
     <div style={styles.boardWrap}>
       <input className="rw-board-title" style={styles.boardTitle} value={board.name} onChange={(e) => onRename(board.id, e.target.value)} />
+
+      <div style={styles.monthTabRow}>
+        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
+          ‹
+        </button>
+        <div className="rw-month-scroll" style={styles.monthTabScroll}>
+          {MONTH_NAMES_ID.map((label, idx) => {
+            const key = monthKeyOf(viewYear, idx);
+            const isActive = key === viewMonth;
+            const isRealCurrent = key === thisMonthKey;
+            return (
+              <button
+                key={key}
+                style={{ ...styles.monthTab, ...(isActive ? styles.monthTabActive : {}) }}
+                onClick={() => setViewMonth(key)}
+                title={isRealCurrent ? `${label} ${viewYear} · bulan berjalan` : `${label} ${viewYear}`}
+              >
+                {label.slice(0, 3)}
+                {isRealCurrent && <span style={styles.monthTabDot} />}
+              </button>
+            );
+          })}
+        </div>
+        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, 1))} title="Bulan berikutnya" aria-label="Bulan berikutnya">
+          ›
+        </button>
+        <span style={styles.monthTabLabel}>{monthKeyLabel(viewMonth)}</span>
+      </div>
+
       <div className="rw-columns-row" style={styles.columnsRow}>
-        {board.columns.map((col, colIndex) => (
+        {monthBoard.columns.map((col, colIndex) => (
           <div
             key={col.id}
             className="rw-column"
@@ -1901,17 +2059,17 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
               e.preventDefault();
               setDragOverCol(null);
               if (dragCard) {
-                onMoveCard(board.id, dragCard.colId, col.id, dragCard.cardId);
+                onMoveCard(board.id, viewMonth, dragCard.colId, col.id, dragCard.cardId);
                 setDragCard(null);
               }
             }}
           >
             <div style={styles.columnHead}>
-              <input style={styles.columnTitle} value={col.name} onChange={(e) => onRenameColumn(board.id, col.id, e.target.value)} />
+              <input style={styles.columnTitle} value={col.name} onChange={(e) => onRenameColumn(board.id, viewMonth, col.id, e.target.value)} />
               <button
                 style={styles.columnDelete}
                 onClick={() => {
-                  onRequestConfirm(`Hapus kolom "${col.name}" beserta isinya?`, () => onDeleteColumn(board.id, col.id));
+                  onRequestConfirm(`Hapus kolom "${col.name}" beserta isinya?`, () => onDeleteColumn(board.id, viewMonth, col.id));
                 }}
               >
                 <X size={14} />
@@ -1920,7 +2078,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
 
             <div style={styles.cardStack}>
               {col.cardIds.map((cid) => {
-                const card = board.cards[cid];
+                const card = monthBoard.cards[cid];
                 if (!card) return null;
                 const info = getDurationInfo(card);
                 const involved = card.involvedMembers || [];
@@ -1937,19 +2095,19 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                     <CardTitle
                       text={card.text}
                       checked={card.checked}
-                      onToggleCheck={() => onToggleCheck(board.id, col.id, cid)}
-                      onSave={(newText) => onUpdateCard(board.id, cid, { text: newText })}
-                      onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, col.id, cid))}
+                      onToggleCheck={() => onToggleCheck(board.id, viewMonth, col.id, cid)}
+                      onSave={(newText) => onUpdateCard(board.id, viewMonth, cid, { text: newText })}
+                      onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, viewMonth, cid))}
                     />
 
-                    <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, cid, { createdAt: ts })} />
+                    <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, viewMonth, cid, { createdAt: ts })} />
 
                     <TypeSelect
                       value={card.cardType}
                       options={cardTypes}
                       qty={card.qty}
-                      onChange={(v) => onUpdateCard(board.id, cid, { cardType: v })}
-                      onQtyChange={(v) => onUpdateCard(board.id, cid, { qty: v === "" ? "" : Number(v) })}
+                      onChange={(v) => onUpdateCard(board.id, viewMonth, cid, { cardType: v })}
+                      onQtyChange={(v) => onUpdateCard(board.id, viewMonth, cid, { qty: v === "" ? "" : Number(v) })}
                       onAddOption={onAddCardType}
                       onRequestConfirm={onRequestConfirm}
                     />
@@ -2044,7 +2202,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
             )}
           </div>
         ))}
-        <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id)}>
+        <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id, viewMonth)}>
           + Kolom
         </button>
       </div>
@@ -2062,34 +2220,29 @@ function NoteView({ note, onUpdate }) {
   );
 }
 
-function InsightView({ wsData }) {
-  const [typeFilter, setTypeFilter] = useState("__all__");
-
+// Aggregates one month's data across every board into: overall
+// done/inProgress/todo counts, per-jenis-kartu totals, and per-anggota
+// counts (kartu sedang dikerjakan & selesai, mengikuti filter jenis kartu).
+function computeMonthInsight(wsData, monthKey, typeFilter) {
   let done = 0;
   let inProgress = 0;
   let todo = 0;
-
-  // Per jenis kartu: total kartu + rincian statusnya, dihitung dari seluruh
-  // papan (kolom pertama = belum dikerjakan, kedua = sedang dikerjakan,
-  // ketiga = selesai — sama seperti konvensi ringkasan utama di atas).
   const typeStats = {};
-  // Per tim/anggota: hanya menghitung kartu yang sedang dikerjakan & yang
-  // sudah selesai, mengikuti filter jenis kartu yang dipilih.
   const memberStats = {};
 
   wsData.boardOrder.forEach((bid) => {
     const board = wsData.boards[bid];
-    if (!board) return;
-    if (board.columns[0]) todo += board.columns[0].cardIds.length;
-    if (board.columns[1]) inProgress += board.columns[1].cardIds.length;
-    if (board.columns[2]) done += board.columns[2].cardIds.length;
-
-    board.columns.forEach((col, idx) => {
+    const mb = board && board.monthly ? board.monthly[monthKey] : null;
+    if (!mb) return;
+    mb.columns.forEach((col, idx) => {
       col.cardIds.forEach((cid) => {
-        const card = board.cards[cid];
+        const card = mb.cards[cid];
         if (!card) return;
-        const type = card.cardType || "Belum ditentukan";
+        if (idx === 0) todo += 1;
+        else if (idx === 1) inProgress += 1;
+        else if (idx === 2) done += 1;
 
+        const type = card.cardType || "Belum ditentukan";
         if (!typeStats[type]) typeStats[type] = { todo: 0, inProgress: 0, done: 0, total: 0 };
         typeStats[type].total += 1;
         if (idx === 0) typeStats[type].todo += 1;
@@ -2109,6 +2262,79 @@ function InsightView({ wsData }) {
     });
   });
 
+  return { done, inProgress, todo, typeStats, memberStats };
+}
+
+// Total kartu for one metric ("__all__" = seluruh jenis, or a specific jenis
+// kartu) within one month, across every board — this is what the comparison
+// chart plots per month.
+function countMonthMetric(wsData, monthKey, metric) {
+  let count = 0;
+  wsData.boardOrder.forEach((bid) => {
+    const board = wsData.boards[bid];
+    const mb = board && board.monthly ? board.monthly[monthKey] : null;
+    if (!mb) return;
+    mb.columns.forEach((col) => {
+      col.cardIds.forEach((cid) => {
+        const card = mb.cards[cid];
+        if (!card) return;
+        const type = card.cardType || "Belum ditentukan";
+        if (metric === "__all__" || type === metric) count += 1;
+      });
+    });
+  });
+  return count;
+}
+
+// Every month key with at least some data anywhere in this workspace,
+// sorted chronologically, always including the current real month even
+// when it's still empty (so the picker never starts out blank).
+function listWorkspaceMonths(wsData) {
+  const keys = new Set([currentMonthKey()]);
+  wsData.boardOrder.forEach((bid) => {
+    const board = wsData.boards[bid];
+    if (!board || !board.monthly) return;
+    Object.keys(board.monthly).forEach((mk) => keys.add(mk));
+  });
+  return Array.from(keys).sort();
+}
+
+// Simple vertical bar chart (plain divs, no chart library) comparing one
+// metric across several months.
+function MonthCompareChart({ months, values }) {
+  const max = Math.max(1, ...values);
+  return (
+    <div style={styles.compareChart}>
+      {months.map((mk, i) => {
+        const v = values[i];
+        const pct = Math.max(4, Math.round((v / max) * 100));
+        return (
+          <div key={mk} style={styles.compareBarCol}>
+            <div style={styles.compareBarValue}>{v}</div>
+            <div style={styles.compareBarTrack}>
+              <div style={{ ...styles.compareBarFill, height: `${pct}%` }} />
+            </div>
+            <div style={styles.compareBarLabel}>{monthKeyLabel(mk)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InsightView({ wsData }) {
+  const monthsWithAny = listWorkspaceMonths(wsData);
+  const [mode, setMode] = useState("bulan"); // "bulan" | "bandingkan"
+  const [month, setMonth] = useState(() => currentMonthKey());
+  const [typeFilter, setTypeFilter] = useState("__all__");
+  const [compareMonths, setCompareMonths] = useState(() => {
+    const idx = monthsWithAny.indexOf(currentMonthKey());
+    const start = Math.max(0, idx - 2);
+    return monthsWithAny.slice(start, idx + 1);
+  });
+  const [compareMetric, setCompareMetric] = useState("__all__");
+
+  const { done, inProgress, todo, typeStats, memberStats } = computeMonthInsight(wsData, month, typeFilter);
   const total = done + inProgress;
   const donePct = total ? Math.round((done / total) * 100) : 0;
   const inProgressPct = total ? 100 - donePct : 0;
@@ -2125,145 +2351,363 @@ function InsightView({ wsData }) {
   const summaryText = (() => {
     if (total === 0 && todo === 0) return null;
     if (total === 0) {
-      return `Ada ${todo} pekerjaan yang belum mulai dikerjakan di ${boardCount} papan. Belum ada yang berjalan atau selesai.`;
+      return `Ada ${todo} pekerjaan yang belum mulai dikerjakan di ${boardCount} papan pada ${monthKeyLabel(month)}. Belum ada yang berjalan atau selesai.`;
     }
     let mood;
     if (donePct >= 75) mood = "Capaian kerja sangat baik — sebagian besar pekerjaan sudah tuntas.";
     else if (donePct >= 40) mood = "Progres berjalan cukup seimbang antara yang selesai dan yang masih berjalan.";
     else mood = "Sebagian besar pekerjaan masih dalam proses pengerjaan.";
-    return `Dari total ${total} pekerjaan di ${boardCount} papan, tim telah menyelesaikan ${done} pekerjaan (${donePct}%), sementara ${inProgress} pekerjaan (${inProgressPct}%) masih dalam pengerjaan.${todo ? ` Ada juga ${todo} pekerjaan lain yang belum dimulai.` : ""} ${mood}`;
+    return `Dari total ${total} pekerjaan di ${boardCount} papan pada ${monthKeyLabel(month)}, tim telah menyelesaikan ${done} pekerjaan (${donePct}%), sementara ${inProgress} pekerjaan (${inProgressPct}%) masih dalam pengerjaan.${todo ? ` Ada juga ${todo} pekerjaan lain yang belum dimulai.` : ""} ${mood}`;
   })();
+
+  const toggleCompareMonth = (mk) => {
+    setCompareMonths((list) => (list.includes(mk) ? list.filter((m) => m !== mk) : [...list, mk].sort()));
+  };
 
   return (
     <div style={styles.insightWrap}>
-      <h2 style={styles.insightTitle}>Insight</h2>
-      <div style={styles.insightSubtitle}>Perbandingan pekerjaan sedang dikerjakan dan yang sudah selesai, dari seluruh papan di ruang ini.</div>
+      <div style={styles.insightHeaderRow}>
+        <h2 style={styles.insightTitle}>Insight</h2>
+        <div style={styles.insightModeToggle}>
+          <button style={{ ...styles.insightModeBtn, ...(mode === "bulan" ? styles.insightModeBtnActive : {}) }} onClick={() => setMode("bulan")}>
+            Rekap bulanan
+          </button>
+          <button style={{ ...styles.insightModeBtn, ...(mode === "bandingkan" ? styles.insightModeBtnActive : {}) }} onClick={() => setMode("bandingkan")}>
+            Bandingkan bulan
+          </button>
+        </div>
+      </div>
 
-      {total === 0 ? (
-        <div style={styles.insightEmpty}>{summaryText || "Belum ada pekerjaan yang sedang dikerjakan atau selesai."}</div>
+      {mode === "bulan" ? (
+        <>
+          <div style={styles.insightSubtitle}>
+            Rekap pekerjaan sedang dikerjakan dan selesai, dari seluruh papan di ruang ini, untuk bulan yang dipilih.
+          </div>
+
+          <div style={styles.monthPickerRow}>
+            <button style={styles.monthNavBtn} onClick={() => setMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya">
+              ‹
+            </button>
+            <select style={styles.insightTypeSelect} value={month} onChange={(e) => setMonth(e.target.value)}>
+              {monthsWithAny.map((mk) => (
+                <option key={mk} value={mk}>
+                  {monthKeyLabel(mk)}
+                </option>
+              ))}
+            </select>
+            <button style={styles.monthNavBtn} onClick={() => setMonth((m) => shiftMonthKey(m, 1))} title="Bulan berikutnya">
+              ›
+            </button>
+          </div>
+
+          {total === 0 ? (
+            <div style={styles.insightEmpty}>{summaryText || `Belum ada pekerjaan yang sedang dikerjakan atau selesai pada ${monthKeyLabel(month)}.`}</div>
+          ) : (
+            <>
+              <div style={styles.insightBody}>
+                <div
+                  style={{
+                    ...styles.donutOuter,
+                    background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
+                  }}
+                >
+                  <div style={styles.donutInner}>
+                    <div style={styles.donutTotal}>{total}</div>
+                    <div style={styles.donutTotalLabel}>Total kartu</div>
+                  </div>
+                </div>
+
+                <div style={styles.insightStats}>
+                  <div style={styles.statCard}>
+                    <div style={{ ...styles.statDot, background: "#5B7553" }} />
+                    <div>
+                      <div style={styles.statNumber}>{done}</div>
+                      <div style={styles.statLabel}>Selesai ({donePct}%)</div>
+                    </div>
+                  </div>
+                  <div style={styles.statCard}>
+                    <div style={{ ...styles.statDot, background: "#C48A2E" }} />
+                    <div>
+                      <div style={styles.statNumber}>{inProgress}</div>
+                      <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={styles.insightSummaryCard}>
+                <div style={styles.insightSummaryLabel}>Resume Capaian Kerja</div>
+                <div style={styles.insightSummaryText}>{summaryText}</div>
+              </div>
+            </>
+          )}
+
+          <div style={styles.insightSectionDivider} />
+
+          <div style={styles.insightSectionHeader}>
+            <h3 style={styles.insightSectionTitle}>
+              <Tags size={16} /> Total kartu per jenis
+            </h3>
+            <select style={styles.insightTypeSelect} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+              <option value="__all__">Semua jenis ({totalKartuKeseluruhan})</option>
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t} ({typeStats[t] ? typeStats[t].total : 0})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {typeOptions.length === 0 ? (
+            <div style={styles.insightEmpty}>Belum ada kartu dengan jenis tertentu pada bulan ini.</div>
+          ) : typeFilter === "__all__" ? (
+            <div style={styles.insightTypeGrid}>
+              {typeOptions.map((t) => (
+                <div key={t} style={styles.insightTypeCard}>
+                  <div style={styles.insightTypeCardCount}>{typeStats[t] ? typeStats[t].total : 0}</div>
+                  <div style={styles.insightTypeCardName}>{t}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={styles.insightTypeGrid}>
+              <div style={{ ...styles.insightTypeCard, ...styles.insightTypeCardHighlight }}>
+                <div style={styles.insightTypeCardCount}>{selectedTypeStats.total}</div>
+                <div style={styles.insightTypeCardName}>Total “{typeFilter}”</div>
+              </div>
+              <div style={styles.insightTypeCard}>
+                <div style={styles.insightTypeCardCount}>{selectedTypeStats.done}</div>
+                <div style={styles.insightTypeCardName}>Selesai</div>
+              </div>
+              <div style={styles.insightTypeCard}>
+                <div style={styles.insightTypeCardCount}>{selectedTypeStats.inProgress}</div>
+                <div style={styles.insightTypeCardName}>Sedang dikerjakan</div>
+              </div>
+              <div style={styles.insightTypeCard}>
+                <div style={styles.insightTypeCardCount}>{selectedTypeStats.todo}</div>
+                <div style={styles.insightTypeCardName}>Belum dikerjakan</div>
+              </div>
+            </div>
+          )}
+
+          <div style={styles.insightSectionDivider} />
+
+          <div style={styles.insightSectionHeader}>
+            <h3 style={styles.insightSectionTitle}>
+              <Users size={16} /> Progres per tim/anggota
+            </h3>
+          </div>
+          <div style={styles.insightSubtitleSmall}>
+            {typeFilter === "__all__" ? "Seluruh jenis kartu" : `Jenis kartu: ${typeFilter}`} · {monthKeyLabel(month)} · kartu sedang dikerjakan & selesai
+          </div>
+
+          {memberRows.length === 0 ? (
+            <div style={styles.insightEmpty}>Belum ada anggota yang tercatat pada kartu berjalan atau selesai bulan ini.</div>
+          ) : (
+            <div style={styles.memberStatsTable}>
+              {memberRows.map((m) => {
+                const pct = m.total ? Math.round((m.done / m.total) * 100) : 0;
+                return (
+                  <div key={m.name} style={styles.memberStatsRow}>
+                    <div style={styles.memberStatsName}>{m.name}</div>
+                    <div style={styles.memberStatsBarTrack}>
+                      <div style={{ ...styles.memberStatsBarFill, width: `${pct}%` }} />
+                    </div>
+                    <div style={styles.memberStatsNums}>
+                      <span style={styles.memberStatsDone}>{m.done} selesai</span>
+                      <span style={styles.memberStatsProgress}>{m.inProgress} dikerjakan</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       ) : (
         <>
-          <div style={styles.insightBody}>
-            <div
-              style={{
-                ...styles.donutOuter,
-                background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
-              }}
-            >
-              <div style={styles.donutInner}>
-                <div style={styles.donutTotal}>{total}</div>
-                <div style={styles.donutTotalLabel}>Total kartu</div>
-              </div>
-            </div>
+          <div style={styles.insightSubtitle}>Bandingkan jumlah kartu antar bulan — pilih dua bulan atau lebih, lalu pilih apa yang ingin dilihat (total kartu, atau satu jenis kartu tertentu).</div>
 
-            <div style={styles.insightStats}>
-              <div style={styles.statCard}>
-                <div style={{ ...styles.statDot, background: "#5B7553" }} />
-                <div>
-                  <div style={styles.statNumber}>{done}</div>
-                  <div style={styles.statLabel}>Selesai ({donePct}%)</div>
-                </div>
-              </div>
-              <div style={styles.statCard}>
-                <div style={{ ...styles.statDot, background: "#C48A2E" }} />
-                <div>
-                  <div style={styles.statNumber}>{inProgress}</div>
-                  <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
-                </div>
-              </div>
+          <div style={styles.compareControls}>
+            <div style={styles.compareMonthPicker}>
+              {monthsWithAny.map((mk) => {
+                const active = compareMonths.includes(mk);
+                return (
+                  <button key={mk} style={{ ...styles.compareMonthChip, ...(active ? styles.compareMonthChipActive : {}) }} onClick={() => toggleCompareMonth(mk)}>
+                    {monthKeyLabel(mk)}
+                  </button>
+                );
+              })}
             </div>
+            <select style={styles.insightTypeSelect} value={compareMetric} onChange={(e) => setCompareMetric(e.target.value)}>
+              <option value="__all__">Total kartu (semua jenis)</option>
+              {(wsData.cardTypes || []).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div style={styles.insightSummaryCard}>
-            <div style={styles.insightSummaryLabel}>Resume Capaian Kerja</div>
-            <div style={styles.insightSummaryText}>{summaryText}</div>
-          </div>
+          {compareMonths.length < 2 ? (
+            <div style={styles.insightEmpty}>Pilih minimal 2 bulan untuk dibandingkan.</div>
+          ) : (
+            <>
+              <MonthCompareChart months={compareMonths} values={compareMonths.map((mk) => countMonthMetric(wsData, mk, compareMetric))} />
+              <div style={styles.compareSummaryText}>
+                {compareMetric === "__all__" ? "Total kartu" : `Jenis kartu “${compareMetric}”`} per bulan:{" "}
+                {compareMonths.map((mk) => `${monthKeyLabel(mk)} (${countMonthMetric(wsData, mk, compareMetric)})`).join(", ")}.
+              </div>
+            </>
+          )}
         </>
-      )}
-
-      <div style={styles.insightSectionDivider} />
-
-      <div style={styles.insightSectionHeader}>
-        <h3 style={styles.insightSectionTitle}>
-          <Tags size={16} /> Total kartu per jenis
-        </h3>
-        <select style={styles.insightTypeSelect} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="__all__">Semua jenis ({totalKartuKeseluruhan})</option>
-          {typeOptions.map((t) => (
-            <option key={t} value={t}>
-              {t} ({typeStats[t] ? typeStats[t].total : 0})
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {typeOptions.length === 0 ? (
-        <div style={styles.insightEmpty}>Belum ada kartu dengan jenis tertentu.</div>
-      ) : typeFilter === "__all__" ? (
-        <div style={styles.insightTypeGrid}>
-          {typeOptions.map((t) => (
-            <div key={t} style={styles.insightTypeCard}>
-              <div style={styles.insightTypeCardCount}>{typeStats[t] ? typeStats[t].total : 0}</div>
-              <div style={styles.insightTypeCardName}>{t}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={styles.insightTypeGrid}>
-          <div style={{ ...styles.insightTypeCard, ...styles.insightTypeCardHighlight }}>
-            <div style={styles.insightTypeCardCount}>{selectedTypeStats.total}</div>
-            <div style={styles.insightTypeCardName}>Total “{typeFilter}”</div>
-          </div>
-          <div style={styles.insightTypeCard}>
-            <div style={styles.insightTypeCardCount}>{selectedTypeStats.done}</div>
-            <div style={styles.insightTypeCardName}>Selesai</div>
-          </div>
-          <div style={styles.insightTypeCard}>
-            <div style={styles.insightTypeCardCount}>{selectedTypeStats.inProgress}</div>
-            <div style={styles.insightTypeCardName}>Sedang dikerjakan</div>
-          </div>
-          <div style={styles.insightTypeCard}>
-            <div style={styles.insightTypeCardCount}>{selectedTypeStats.todo}</div>
-            <div style={styles.insightTypeCardName}>Belum dikerjakan</div>
-          </div>
-        </div>
-      )}
-
-      <div style={styles.insightSectionDivider} />
-
-      <div style={styles.insightSectionHeader}>
-        <h3 style={styles.insightSectionTitle}>
-          <Users size={16} /> Progres per tim/anggota
-        </h3>
-      </div>
-      <div style={styles.insightSubtitleSmall}>
-        {typeFilter === "__all__" ? "Seluruh jenis kartu" : `Jenis kartu: ${typeFilter}`} · kartu sedang dikerjakan & selesai
-      </div>
-
-      {memberRows.length === 0 ? (
-        <div style={styles.insightEmpty}>Belum ada anggota yang tercatat pada kartu berjalan atau selesai.</div>
-      ) : (
-        <div style={styles.memberStatsTable}>
-          {memberRows.map((m) => {
-            const pct = m.total ? Math.round((m.done / m.total) * 100) : 0;
-            return (
-              <div key={m.name} style={styles.memberStatsRow}>
-                <div style={styles.memberStatsName}>{m.name}</div>
-                <div style={styles.memberStatsBarTrack}>
-                  <div style={{ ...styles.memberStatsBarFill, width: `${pct}%` }} />
-                </div>
-                <div style={styles.memberStatsNums}>
-                  <span style={styles.memberStatsDone}>{m.done} selesai</span>
-                  <span style={styles.memberStatsProgress}>{m.inProgress} dikerjakan</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       )}
     </div>
   );
 }
+
+
+const WEEKDAY_LABELS_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+
+// Kalender Annual Plan: satu bulan besar per layar. Klik tanggal untuk
+// melihat/menambah catatan — menambah catatan di sini membuat kartu asli
+// pada papan yang dipilih (bulan mengikuti tanggal itu), jadi otomatis
+// tersinkron dengan papan.
+function CalendarView({ wsData, currentUsername, onAddNote, onDeleteNote, onToggleNote, onRequestConfirm }) {
+  const boardOrder = wsData.boardOrder || [];
+  const [viewMonth, setViewMonth] = useState(() => currentMonthKey());
+  const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(Date.now()));
+  const [selectedBoardId, setSelectedBoardId] = useState(boardOrder[0] || "");
+  const [noteText, setNoteText] = useState("");
+
+  useEffect(() => {
+    if ((!selectedBoardId || !wsData.boards[selectedBoardId]) && boardOrder.length) setSelectedBoardId(boardOrder[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardOrder.join(",")]);
+
+  const { year, monthIndex0 } = parseMonthKey(viewMonth);
+  const daysInMonth = new Date(year, monthIndex0 + 1, 0).getDate();
+  const firstWeekdayMon0 = (new Date(year, monthIndex0, 1).getDay() + 6) % 7; // Senin = 0
+
+  const dateStrFor = (d) => `${year}-${String(monthIndex0 + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const notesByDate = wsData.calendarNotes || {};
+
+  const cells = [];
+  for (let i = 0; i < firstWeekdayMon0; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const selectedNotes = notesByDate[selectedDate] || [];
+  const todayStr = toDateInputValue(Date.now());
+
+  const resolveNote = (note) => {
+    const board = wsData.boards[note.boardId];
+    if (!board) return null;
+    const loc = findCardLocation(board, note.monthKey, note.cardId);
+    return loc ? { board, colId: loc.colId, card: loc.card } : null;
+  };
+
+  const submitNote = () => {
+    if (!noteText.trim() || !selectedBoardId) return;
+    onAddNote(selectedDate, selectedBoardId, noteText, "");
+    setNoteText("");
+  };
+
+  return (
+    <div style={styles.calendarWrap}>
+      <h2 style={styles.insightTitle}>Kalender</h2>
+      <div style={styles.insightSubtitle}>Rencana tahunan — klik tanggal untuk menambahkan catatan. Catatan otomatis menjadi kartu pada papan yang dipilih, di bulan sesuai tanggalnya.</div>
+
+      <div style={styles.calendarNavRow}>
+        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya">
+          ‹
+        </button>
+        <div style={styles.calendarMonthLabel}>{monthKeyLabel(viewMonth)}</div>
+        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, 1))} title="Bulan berikutnya">
+          ›
+        </button>
+      </div>
+
+      <div style={styles.calendarGrid}>
+        {WEEKDAY_LABELS_ID.map((w) => (
+          <div key={w} style={styles.calendarWeekdayCell}>
+            {w}
+          </div>
+        ))}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={`blank${i}`} style={styles.calendarEmptyCell} />;
+          const dateStr = dateStrFor(d);
+          const notes = notesByDate[dateStr] || [];
+          const isSelected = dateStr === selectedDate;
+          const isToday = dateStr === todayStr;
+          return (
+            <div
+              key={dateStr}
+              style={{ ...styles.calendarDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(isSelected ? styles.calendarDayCellSelected : {}) }}
+              onClick={() => setSelectedDate(dateStr)}
+            >
+              <span style={styles.calendarDayNum}>{d}</span>
+              {notes.length > 0 && <span style={styles.calendarDayBadge}>{notes.length}</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={styles.calendarPanel}>
+        <div style={styles.calendarPanelTitle}>{formatCreatedDate(dateInputToTimestamp(selectedDate))}</div>
+
+        {selectedNotes.length === 0 ? (
+          <div style={styles.insightEmpty}>Belum ada catatan pada tanggal ini.</div>
+        ) : (
+          <div style={styles.calendarNoteList}>
+            {selectedNotes.map((note) => {
+              const resolved = resolveNote(note);
+              if (!resolved) return null;
+              return (
+                <div key={note.id} style={styles.calendarNoteItem}>
+                  <label style={styles.checkLabel}>
+                    <input type="checkbox" checked={!!resolved.card.checked} onChange={() => onToggleNote(note)} style={styles.checkbox} />
+                    <span style={{ ...styles.cardText, ...(resolved.card.checked ? styles.cardTextDone : {}) }}>{resolved.card.text}</span>
+                  </label>
+                  <div style={styles.calendarNoteMeta}>
+                    {resolved.board.name}
+                    {resolved.card.cardType ? ` · ${resolved.card.cardType}` : ""}
+                  </div>
+                  <button style={styles.cardDelete} onClick={() => onRequestConfirm("Hapus catatan ini?", () => onDeleteNote(selectedDate, note))} title="Hapus catatan" aria-label="Hapus catatan">
+                    <X size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {boardOrder.length === 0 ? (
+          <div style={styles.insightSubtitleSmall}>Buat papan terlebih dulu untuk bisa menambahkan catatan dari kalender.</div>
+        ) : (
+          <div style={styles.calendarAddRow}>
+            <select style={styles.insightTypeSelect} value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
+              {boardOrder.map((bid) => (
+                <option key={bid} value={bid}>
+                  {wsData.boards[bid]?.name}
+                </option>
+              ))}
+            </select>
+            <input
+              style={styles.addCardInput}
+              placeholder="Tulis catatan…"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitNote()}
+            />
+            <button style={styles.submitCardBtn} onClick={submitNote} title="Tambahkan catatan" aria-label="Tambahkan catatan">
+              <Plus size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 const styles = {
   app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "var(--app-bg)", color: "var(--text-primary)", position: "relative" },
@@ -2332,8 +2776,15 @@ const styles = {
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "var(--text-faint)", textAlign: "center" },
   emptyTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "var(--text-primary)" },
   emptyText: { fontSize: 14, maxWidth: 340 },
-  boardWrap: { display: "flex", flexDirection: "column", gap: 20, height: "100%" },
+  boardWrap: { display: "flex", flexDirection: "column", gap: 14, height: "100%" },
   boardTitle: { fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", padding: "2px 0", width: "100%", boxSizing: "border-box" },
+  monthTabRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  monthNavBtn: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 6, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 15, flexShrink: 0 },
+  monthTabScroll: { display: "flex", gap: 4, overflowX: "auto", flex: 1, minWidth: 0 },
+  monthTab: { position: "relative", flexShrink: 0, border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer", textTransform: "uppercase" },
+  monthTabActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff", fontWeight: 600 },
+  monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#5B7553" },
+  monthTabLabel: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
   columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", paddingBottom: 20, flex: 1 },
   column: { background: "var(--surface)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", border: "1px solid var(--card-border)", borderTop: "3px solid #C48A2E", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0 },
   columnDragOver: { boxShadow: "0 0 0 2px #C48A2E inset" },
@@ -2386,10 +2837,26 @@ const styles = {
   noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "var(--text-faint)", marginBottom: 10 },
   noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" },
 
-  insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 760 },
+  insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 780 },
+  insightHeaderRow: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 },
   insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
-  insightSubtitle: { fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 14 },
+  insightModeToggle: { display: "flex", gap: 6, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 9, padding: 3 },
+  insightModeBtn: { border: "none", background: "transparent", color: "var(--text-muted)", borderRadius: 6, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  insightModeBtnActive: { background: "#C48A2E", color: "#fff", fontWeight: 600 },
+  monthPickerRow: { display: "flex", alignItems: "center", gap: 6, margin: "4px 0 10px" },
+  insightSubtitle: { fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 6 },
   insightSubtitleSmall: { fontSize: 12, color: "var(--text-faint)", marginBottom: 6 },
+  compareControls: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, margin: "6px 0 18px" },
+  compareMonthPicker: { display: "flex", flexWrap: "wrap", gap: 6 },
+  compareMonthChip: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 12, padding: "5px 12px", fontSize: 12, cursor: "pointer" },
+  compareMonthChipActive: { background: "#5B7553", borderColor: "#5B7553", color: "#fff" },
+  compareChart: { display: "flex", alignItems: "flex-end", gap: 18, height: 220, padding: "18px 10px 0", borderBottom: "1px solid var(--card-border)", overflowX: "auto" },
+  compareBarCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 64, height: "100%", justifyContent: "flex-end" },
+  compareBarValue: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
+  compareBarTrack: { width: 34, flex: 1, display: "flex", alignItems: "flex-end", background: "var(--surface-solid)", borderRadius: 6, overflow: "hidden" },
+  compareBarFill: { width: "100%", background: "linear-gradient(180deg, #DDBB79, #C48A2E)", borderRadius: "6px 6px 0 0", transition: "height 0.3s ease" },
+  compareBarLabel: { fontSize: 11, color: "var(--text-muted)", textAlign: "center", whiteSpace: "nowrap" },
+  compareSummaryText: { fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6, marginTop: 14 },
   insightSectionDivider: { height: 1, background: "var(--card-border)", margin: "26px 0 18px" },
   insightSectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 4 },
   insightSectionTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: "'Fraunces', Georgia, serif", fontSize: 18, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
@@ -2451,4 +2918,35 @@ const styles = {
   modalActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
   modalCancel: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
   modalConfirm: { background: "#B4402C", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+
+  calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620 },
+  calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, margin: "6px 0 14px" },
+  calendarMonthLabel: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 19, fontWeight: 600, color: "var(--text-primary)", minWidth: 160, textAlign: "center" },
+  calendarGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 },
+  calendarWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", padding: "4px 0" },
+  calendarEmptyCell: { aspectRatio: "1 / 1" },
+  calendarDayCell: {
+    position: "relative",
+    aspectRatio: "1 / 1",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    background: "var(--surface-solid)",
+    border: "1px solid var(--card-border)",
+    cursor: "pointer",
+    fontSize: 13,
+    color: "var(--text-primary)",
+  },
+  calendarDayCellToday: { borderColor: "#5B7553", boxShadow: "0 0 0 1px #5B7553 inset" },
+  calendarDayCellSelected: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
+  calendarDayNum: { fontWeight: 600 },
+  calendarDayBadge: { position: "absolute", top: 3, right: 3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, color: "#fff", background: "#B4402C", borderRadius: 8, minWidth: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" },
+  calendarPanel: { marginTop: 20, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 },
+  calendarPanelTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16, fontWeight: 600, color: "var(--text-primary)" },
+  calendarNoteList: { display: "flex", flexDirection: "column", gap: 8 },
+  calendarNoteItem: { display: "flex", alignItems: "center", gap: 10, background: "var(--surface-strong)", border: "1px solid var(--card-border)", borderRadius: 8, padding: "8px 10px" },
+  calendarNoteMeta: { fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0, whiteSpace: "nowrap" },
+  calendarAddRow: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" },
 };
