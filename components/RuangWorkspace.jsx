@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -209,16 +209,25 @@ function normalizeWsData(raw) {
   const boards = { ...(base.boards || {}) };
 
   // Normalizes one month's { columns, cards } bucket: fills in defaults that
-  // older cards may be missing (involvedMembers/cardType/qty).
+  // older cards may be missing (involvedMembers/cardType/qty/startedAt).
   const normalizeMonthBoard = (monthBoard) => {
+    const columns = monthBoard.columns || [];
     const cards = { ...(monthBoard.cards || {}) };
     Object.keys(cards).forEach((cid) => {
       const card = cards[cid];
       const involvedMembers = card.involvedMembers ? card.involvedMembers : card.assignee ? [card.assignee] : [];
       const qty = Number(card.qty) > 0 ? Number(card.qty) : 1;
-      cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "", qty };
+      // Kartu lama (dari sebelum fitur "timer aktif setelah dikerjakan") yang
+      // sudah lanjut ke kolom kedua atau lebih dianggap sudah berjalan sejak
+      // dibuat, supaya hitung mundurnya tidak tiba-tiba hilang.
+      let startedAt = card.startedAt;
+      if (!startedAt) {
+        const colIndex = columns.findIndex((c) => c.cardIds && c.cardIds.includes(cid));
+        if (colIndex >= 1) startedAt = card.createdAt;
+      }
+      cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "", qty, priority: !!card.priority, startedAt };
     });
-    return { columns: monthBoard.columns || [], cards };
+    return { columns, cards };
   };
 
   Object.keys(boards).forEach((bid) => {
@@ -266,8 +275,9 @@ function formatHoursMinutes(ms) {
 
 function getDurationInfo(card) {
   if (!card.duration) return null;
+  if (!card.startedAt) return null; // masih di "Belum Dikerjakan" — timer belum aktif
   const { amount, unit } = card.duration;
-  const due = card.createdAt + amount * UNIT_MS[unit];
+  const due = card.startedAt + amount * UNIT_MS[unit];
   const remaining = due - Date.now();
   const label = `${amount} ${UNIT_LABEL[unit]}`;
   if (remaining <= 0) {
@@ -329,7 +339,7 @@ function buildAndDownloadWorkbook(wsName, data) {
             Kartu: card.text,
             "Tim Terlibat": (card.involvedMembers || []).join(", "),
             "Durasi Target": card.duration ? `${card.duration.amount} ${UNIT_LABEL[card.duration.unit]}` : "",
-            Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : "",
+            Status: info ? (info.status === "overdue" ? "Terlambat" : info.status === "due_soon" ? "Mendekati tenggat" : "Tepat waktu") : card.duration && !card.startedAt ? "Belum dimulai" : "",
             "Dibuat pada": formatCreatedDate(card.createdAt),
           });
         });
@@ -401,6 +411,11 @@ const RESPONSIVE_CSS = `
 .rw-backdrop { display: none; }
 .rw-board-title { font-size: 26px; }
 .rw-column { width: 270px; min-width: 270px; }
+.rw-card-stack { scrollbar-width: thin; scrollbar-color: var(--card-border) transparent; }
+.rw-card-stack::-webkit-scrollbar { width: 6px; }
+.rw-card-stack::-webkit-scrollbar-track { background: transparent; }
+.rw-card-stack::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+.rw-card-stack::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 .rw-card {
   transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
 }
@@ -1012,7 +1027,7 @@ export default function RuangWorkspace() {
     const finalQty = Number(qty) > 0 ? Number(qty) : 1;
     const finalCreatedAt = Number(createdAt) > 0 ? Number(createdAt) : Date.now();
     const newId = uid();
-    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false };
+    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false, priority: false };
     patchMonthBoard(boardId, monthKey, (mb) => {
       // Falls back to the first column if colId doesn't match anything in
       // this month's bucket (e.g. a calendar note aimed at a month that's
@@ -1042,7 +1057,12 @@ export default function RuangWorkspace() {
     patchMonthBoard(boardId, monthKey, (mb) => {
       const columns = mb.columns.map((c) => (c.id === fromCol ? { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) } : c));
       const finalColumns = columns.map((c) => (c.id === toCol && !c.cardIds.includes(cardId) ? { ...c, cardIds: [...c.cardIds, cardId] } : c));
-      return { ...mb, columns: finalColumns };
+      const toIndex = mb.columns.findIndex((c) => c.id === toCol);
+      const card = mb.cards[cardId];
+      // Menyeret kartu langsung ke "Sedang Dikerjakan" juga mengaktifkan timer,
+      // sama seperti mencentangnya — kalau belum pernah dimulai sebelumnya.
+      const cards = toIndex === 1 && card && !card.startedAt ? { ...mb.cards, [cardId]: { ...card, startedAt: Date.now() } } : mb.cards;
+      return { ...mb, columns: finalColumns, cards };
     });
   };
 
@@ -1073,13 +1093,39 @@ export default function RuangWorkspace() {
           return c;
         });
         const clearDuration = targetIndex === 2;
-        cards = { ...cards, [cardId]: { ...cards[cardId], checked: false, duration: clearDuration ? null : cards[cardId].duration } };
+        const startingNow = targetIndex === 1 && !cards[cardId].startedAt;
+        cards = {
+          ...cards,
+          [cardId]: {
+            ...cards[cardId],
+            checked: false,
+            duration: clearDuration ? null : cards[cardId].duration,
+            startedAt: startingNow ? Date.now() : cards[cardId].startedAt,
+          },
+        };
       }
       return { ...mb, columns, cards };
     });
   };
 
-  // ---- Kalender (annual plan) actions ----
+  // Menandai kartu sebagai prioritas tinggi. Saat dinyalakan, kartu langsung
+  // dipindah ke urutan paling atas kolomnya (di-pin) — kartu lain otomatis
+  // turun. Saat dimatikan, posisinya dibiarkan apa adanya.
+  const togglePriority = (boardId, monthKey, colId, cardId) => {
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const card = mb.cards[cardId];
+      if (!card) return null;
+      const newPriority = !card.priority;
+      const cards = { ...mb.cards, [cardId]: { ...card, priority: newPriority } };
+      let columns = mb.columns;
+      if (newPriority) {
+        columns = mb.columns.map((c) => (c.id === colId ? { ...c, cardIds: [cardId, ...c.cardIds.filter((id) => id !== cardId)] } : c));
+      }
+      return { ...mb, columns, cards };
+    });
+  };
+
+
   // Menambahkan kartu dari kalender bekerja persis seperti menambah kartu
   // langsung dari papan (jenis, jumlah, tim terlibat, durasi, kolom tujuan) —
   // hanya saja tanggal & bulannya ditentukan oleh tanggal yang dipilih di
@@ -1262,6 +1308,7 @@ export default function RuangWorkspace() {
             onMoveCard={moveCard}
             onUpdateCard={updateCard}
             onToggleCheck={toggleCheck}
+            onTogglePriority={togglePriority}
             onRequestConfirm={requestConfirm}
             dragCard={dragCard}
             setDragCard={setDragCard}
@@ -1931,7 +1978,7 @@ function CreatedDateEditor({ createdAt, onChange }) {
 // Inline card-title editor: click the pencil to rename an existing card
 // without losing its checked state, duration, or other fields. Enter/blur
 // saves, Escape reverts.
-function CardTitle({ text, checked, onToggleCheck, onSave, onRequestDelete }) {
+function CardTitle({ text, checked, priority, onToggleCheck, onSave, onRequestDelete, onTogglePriority }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
 
@@ -1976,6 +2023,14 @@ function CardTitle({ text, checked, onToggleCheck, onSave, onRequestDelete }) {
         </label>
       )}
       <div style={styles.cardTopActions}>
+        <button
+          style={{ ...styles.cardPriorityBtn, ...(priority ? styles.cardPriorityBtnActive : {}) }}
+          onClick={onTogglePriority}
+          title={priority ? "Batalkan prioritas tinggi" : "Tandai prioritas tinggi — dipin ke atas"}
+          aria-label={priority ? "Batalkan prioritas tinggi" : "Tandai prioritas tinggi"}
+        >
+          <Flag size={13} fill={priority ? "#EF4444" : "none"} />
+        </button>
         {!editing && (
           <button style={styles.cardEditBtn} onClick={() => setEditing(true)} title="Ubah nama kartu" aria-label="Ubah nama kartu">
             <Pencil size={13} />
@@ -1989,7 +2044,7 @@ function CardTitle({ text, checked, onToggleCheck, onSave, onRequestDelete }) {
   );
 }
 
-function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onRequestConfirm, dragCard, setDragCard }) {
+function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
   // Papan bulanan: setiap bulan punya kolom & kartunya sendiri. Dibuka
@@ -2094,7 +2149,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
               </button>
             </div>
 
-            <div style={styles.cardStack}>
+            <div className="rw-card-stack" style={styles.cardStack}>
               {col.cardIds.map((cid) => {
                 const card = monthBoard.cards[cid];
                 if (!card) return null;
@@ -2108,12 +2163,18 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                     onDragStart={() => setDragCard({ cardId: cid, colId: col.id })}
                     onDragEnd={() => setDragCard(null)}
                     className="rw-card"
-                    style={{ ...styles.card, borderLeft: `3px solid ${accentColor}` }}
+                    style={{
+                      ...styles.card,
+                      borderLeft: `3px solid ${card.priority ? "#EF4444" : accentColor}`,
+                      ...(card.priority ? styles.cardPriority : {}),
+                    }}
                   >
                     <CardTitle
                       text={card.text}
                       checked={card.checked}
+                      priority={card.priority}
                       onToggleCheck={() => onToggleCheck(board.id, viewMonth, col.id, cid)}
+                      onTogglePriority={() => onTogglePriority(board.id, viewMonth, col.id, cid)}
                       onSave={(newText) => onUpdateCard(board.id, viewMonth, cid, { text: newText })}
                       onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, viewMonth, cid))}
                     />
@@ -2157,6 +2218,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                     )}
 
                     {info && <span style={{ ...styles.durationPill, ...(info.status === "overdue" ? styles.durationOverdue : {}), ...(info.status === "due_soon" ? styles.durationDueSoon : {}) }}>⏱ {info.text}</span>}
+                    {!info && card.duration && <span style={styles.durationPill}>⏱ Menunggu dimulai</span>}
                   </div>
                 );
               })}
@@ -2892,16 +2954,17 @@ const styles = {
   monthTabActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff", fontWeight: 600 },
   monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#10B981" },
   monthTabLabel: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
-  columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", paddingBottom: 20, flex: 1 },
-  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0 },
+  columnsRow: { display: "flex", gap: 16, alignItems: "stretch", overflowX: "auto", overflowY: "hidden", paddingBottom: 20, flex: 1, minHeight: 0 },
+  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0, minHeight: 0 },
   columnDragOver: { boxShadow: "0 0 0 2px #3B82F6 inset" },
-  columnHead: { display: "flex", alignItems: "center", gap: 6 },
+  columnHead: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
   columnDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
   columnTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", border: "none", background: "transparent", outline: "none", color: "var(--text-muted)", flex: 1, minWidth: 0 },
   columnCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, flexShrink: 0 },
   columnDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
-  cardStack: { display: "flex", flexDirection: "column", gap: 8 },
-  card: { background: "var(--surface-strong)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)" },
+  cardStack: { display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", paddingRight: 2 },
+  card: { background: "var(--surface-strong)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)", flexShrink: 0 },
+  cardPriority: { background: "rgba(239,68,68,0.12)", borderColor: "rgba(239,68,68,0.35)" },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 },
   cardTopActions: { display: "flex", alignItems: "center", gap: 2, flexShrink: 0 },
   checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1, minWidth: 0 },
@@ -2910,6 +2973,8 @@ const styles = {
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
   cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #3B82F6", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
   cardEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  cardPriorityBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  cardPriorityBtnActive: { color: "#EF4444" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
   typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
