@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -1978,7 +1978,7 @@ function CreatedDateEditor({ createdAt, onChange }) {
 // Inline card-title editor: click the pencil to rename an existing card
 // without losing its checked state, duration, or other fields. Enter/blur
 // saves, Escape reverts.
-function CardTitle({ text, checked, priority, onToggleCheck, onSave, onRequestDelete, onTogglePriority }) {
+function CardTitle({ text, checked, priority, checkboxDisabled, onToggleCheck, onSave, onRequestDelete, onTogglePriority, canMoveLeft, canMoveRight, onMoveLeft, onMoveRight }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
 
@@ -2018,11 +2018,33 @@ function CardTitle({ text, checked, priority, onToggleCheck, onSave, onRequestDe
         />
       ) : (
         <label style={styles.checkLabel}>
-          <input type="checkbox" checked={!!checked} onChange={onToggleCheck} style={styles.checkbox} />
+          {checkboxDisabled ? (
+            <Check size={13} style={styles.cardDoneIcon} title="Otomatis selesai di kolom ini" />
+          ) : (
+            <input type="checkbox" checked={!!checked} onChange={onToggleCheck} style={styles.checkbox} />
+          )}
           <span style={{ ...styles.cardText, ...(checked ? styles.cardTextDone : {}) }}>{text}</span>
         </label>
       )}
       <div style={styles.cardTopActions}>
+        <button
+          style={{ ...styles.cardMoveBtn, ...(canMoveLeft ? {} : styles.cardMoveBtnDisabled) }}
+          onClick={onMoveLeft}
+          disabled={!canMoveLeft}
+          title="Pindah ke kolom sebelumnya"
+          aria-label="Pindah ke kolom sebelumnya"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <button
+          style={{ ...styles.cardMoveBtn, ...(canMoveRight ? {} : styles.cardMoveBtnDisabled) }}
+          onClick={onMoveRight}
+          disabled={!canMoveRight}
+          title="Pindah ke kolom berikutnya"
+          aria-label="Pindah ke kolom berikutnya"
+        >
+          <ChevronRight size={14} />
+        </button>
         <button
           style={{ ...styles.cardPriorityBtn, ...(priority ? styles.cardPriorityBtnActive : {}) }}
           onClick={onTogglePriority}
@@ -2149,6 +2171,92 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
               </button>
             </div>
 
+            <div className="rw-card-stack" style={styles.cardStack}>
+              {col.cardIds.map((cid) => {
+                const card = monthBoard.cards[cid];
+                if (!card) return null;
+                const info = getDurationInfo(card);
+                const involved = card.involvedMembers || [];
+                const accentColor = info ? (info.status === "overdue" ? "#EF4444" : info.status === "due_soon" ? "#F59E0B" : "#10B981") : "transparent";
+                return (
+                  <div
+                    key={cid}
+                    draggable
+                    onDragStart={() => setDragCard({ cardId: cid, colId: col.id })}
+                    onDragEnd={() => setDragCard(null)}
+                    className="rw-card"
+                    style={{
+                      ...styles.card,
+                      borderLeft: `3px solid ${card.priority ? "#EF4444" : accentColor}`,
+                      ...(card.priority ? styles.cardPriority : {}),
+                    }}
+                  >
+                    <CardTitle
+                      text={card.text}
+                      checked={colIndex === 2 ? true : card.checked}
+                      checkboxDisabled={colIndex === 2}
+                      priority={card.priority}
+                      onToggleCheck={() => onToggleCheck(board.id, viewMonth, col.id, cid)}
+                      onTogglePriority={() => onTogglePriority(board.id, viewMonth, col.id, cid)}
+                      onSave={(newText) => onUpdateCard(board.id, viewMonth, cid, { text: newText })}
+                      onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, viewMonth, cid))}
+                      canMoveLeft={colIndex > 0}
+                      canMoveRight={colIndex < monthBoard.columns.length - 1}
+                      onMoveLeft={() => {
+                        const target = monthBoard.columns[colIndex - 1];
+                        if (target) onMoveCard(board.id, viewMonth, col.id, target.id, cid);
+                      }}
+                      onMoveRight={() => {
+                        const target = monthBoard.columns[colIndex + 1];
+                        if (target) onMoveCard(board.id, viewMonth, col.id, target.id, cid);
+                      }}
+                    />
+
+                    <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, viewMonth, cid, { createdAt: ts })} />
+
+                    <TypeSelect
+                      value={card.cardType}
+                      options={cardTypes}
+                      qty={card.qty}
+                      onChange={(v) => onUpdateCard(board.id, viewMonth, cid, { cardType: v })}
+                      onQtyChange={(v) => onUpdateCard(board.id, viewMonth, cid, { qty: v === "" ? "" : Number(v) })}
+                      onAddOption={onAddCardType}
+                      onRequestConfirm={onRequestConfirm}
+                    />
+
+                    <div style={styles.involvedLabel}>Tim terlibat</div>
+                    {isAdmin ? (
+                      <div style={styles.chipRow}>
+                        {members.map((m) => {
+                          const active = involved.includes(m);
+                          return (
+                            <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleCardMember(board.id, cid, involved, m)}>
+                              {m}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={styles.chipRow}>
+                        {involved.length ? (
+                          involved.map((m) => (
+                            <span key={m} style={{ ...styles.chip, ...styles.chipActive, cursor: "default" }}>
+                              {m}
+                            </span>
+                          ))
+                        ) : (
+                          <span style={styles.assigneeReadonly}>Belum ada yang terlibat</span>
+                        )}
+                      </div>
+                    )}
+
+                    {info && <span style={{ ...styles.durationPill, ...(info.status === "overdue" ? styles.durationOverdue : {}), ...(info.status === "due_soon" ? styles.durationDueSoon : {}) }}>⏱ {info.text}</span>}
+                    {!info && card.duration && <span style={styles.durationPill}>⏱ Menunggu dimulai</span>}
+                  </div>
+                );
+              })}
+            </div>
+
             {colIndex === 0 && (
               <div style={styles.addCardRow}>
                 <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
@@ -2205,81 +2313,6 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                 </div>
               </div>
             )}
-
-            <div className="rw-card-stack" style={styles.cardStack}>
-              {col.cardIds.map((cid) => {
-                const card = monthBoard.cards[cid];
-                if (!card) return null;
-                const info = getDurationInfo(card);
-                const involved = card.involvedMembers || [];
-                const accentColor = info ? (info.status === "overdue" ? "#EF4444" : info.status === "due_soon" ? "#F59E0B" : "#10B981") : "transparent";
-                return (
-                  <div
-                    key={cid}
-                    draggable
-                    onDragStart={() => setDragCard({ cardId: cid, colId: col.id })}
-                    onDragEnd={() => setDragCard(null)}
-                    className="rw-card"
-                    style={{
-                      ...styles.card,
-                      borderLeft: `3px solid ${card.priority ? "#EF4444" : accentColor}`,
-                      ...(card.priority ? styles.cardPriority : {}),
-                    }}
-                  >
-                    <CardTitle
-                      text={card.text}
-                      checked={card.checked}
-                      priority={card.priority}
-                      onToggleCheck={() => onToggleCheck(board.id, viewMonth, col.id, cid)}
-                      onTogglePriority={() => onTogglePriority(board.id, viewMonth, col.id, cid)}
-                      onSave={(newText) => onUpdateCard(board.id, viewMonth, cid, { text: newText })}
-                      onRequestDelete={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteCard(board.id, viewMonth, cid))}
-                    />
-
-                    <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, viewMonth, cid, { createdAt: ts })} />
-
-                    <TypeSelect
-                      value={card.cardType}
-                      options={cardTypes}
-                      qty={card.qty}
-                      onChange={(v) => onUpdateCard(board.id, viewMonth, cid, { cardType: v })}
-                      onQtyChange={(v) => onUpdateCard(board.id, viewMonth, cid, { qty: v === "" ? "" : Number(v) })}
-                      onAddOption={onAddCardType}
-                      onRequestConfirm={onRequestConfirm}
-                    />
-
-                    <div style={styles.involvedLabel}>Tim terlibat</div>
-                    {isAdmin ? (
-                      <div style={styles.chipRow}>
-                        {members.map((m) => {
-                          const active = involved.includes(m);
-                          return (
-                            <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleCardMember(board.id, cid, involved, m)}>
-                              {m}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div style={styles.chipRow}>
-                        {involved.length ? (
-                          involved.map((m) => (
-                            <span key={m} style={{ ...styles.chip, ...styles.chipActive, cursor: "default" }}>
-                              {m}
-                            </span>
-                          ))
-                        ) : (
-                          <span style={styles.assigneeReadonly}>Belum ada yang terlibat</span>
-                        )}
-                      </div>
-                    )}
-
-                    {info && <span style={{ ...styles.durationPill, ...(info.status === "overdue" ? styles.durationOverdue : {}), ...(info.status === "due_soon" ? styles.durationDueSoon : {}) }}>⏱ {info.text}</span>}
-                    {!info && card.duration && <span style={styles.durationPill}>⏱ Menunggu dimulai</span>}
-                  </div>
-                );
-              })}
-            </div>
           </div>
         ))}
         <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id, viewMonth)}>
@@ -2955,7 +2988,7 @@ const styles = {
   monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#10B981" },
   monthTabLabel: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
   columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", overflowY: "hidden", paddingBottom: 20, flex: 1, minHeight: 0 },
-  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0, maxHeight: "100%" },
+  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0, minHeight: 0, maxHeight: "100%" },
   columnDragOver: { boxShadow: "0 0 0 2px #3B82F6 inset" },
   columnHead: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
   columnDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
@@ -2973,6 +3006,9 @@ const styles = {
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
   cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #3B82F6", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
   cardEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  cardMoveBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", padding: 0 },
+  cardMoveBtnDisabled: { opacity: 0.25, cursor: "not-allowed" },
+  cardDoneIcon: { color: "#10B981", flexShrink: 0, marginTop: 3 },
   cardPriorityBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   cardPriorityBtnActive: { color: "#EF4444" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
