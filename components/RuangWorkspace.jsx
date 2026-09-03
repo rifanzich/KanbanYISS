@@ -2149,6 +2149,63 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
               </button>
             </div>
 
+            {colIndex === 0 && (
+              <div style={styles.addCardRow}>
+                <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
+
+                <div style={styles.startDateRow}>
+                  <input
+                    type="date"
+                    style={styles.startDateInput}
+                    value={draft(col.id).startDate}
+                    onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
+                    title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
+                  />
+                  <span style={styles.durationHint}>{startDateHint(draft(col.id).startDate)}</span>
+                </div>
+
+                <TypeSelect
+                  value={draft(col.id).cardType}
+                  options={cardTypes}
+                  qty={draft(col.id).qty}
+                  onChange={(v) => setDraft(col.id, { cardType: v })}
+                  onQtyChange={(v) => setDraft(col.id, { qty: v })}
+                  onAddOption={onAddCardType}
+                />
+
+                {isAdmin ? (
+                  <div>
+                    <div style={styles.involvedLabel}>Tim terlibat</div>
+                    <div style={styles.chipRow}>
+                      {members.map((m) => {
+                        const active = draft(col.id).involvedMembers.includes(m);
+                        return (
+                          <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(col.id, m)}>
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
+                )}
+
+                <div className="rw-duration-row" style={styles.durationRow}>
+                  <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
+                  <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
+                    <option value="menit">Menit</option>
+                    <option value="jam">Jam</option>
+                    <option value="hari">Hari</option>
+                  </select>
+                  <span style={styles.durationHint}>kosongkan = 1 hari</span>
+                  <button style={styles.submitCardBtn} onClick={() => submit(col.id)} title="Tambahkan kartu" aria-label="Tambahkan kartu">
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="rw-card-stack" style={styles.cardStack}>
               {col.cardIds.map((cid) => {
                 const card = monthBoard.cards[cid];
@@ -2223,63 +2280,6 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                 );
               })}
             </div>
-
-            {colIndex === 0 && (
-              <div style={styles.addCardRow}>
-                <input style={styles.addCardInput} placeholder="Tulis kartu baru…" value={draft(col.id).text} onChange={(e) => setDraft(col.id, { text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit(col.id)} />
-
-                <div style={styles.startDateRow}>
-                  <input
-                    type="date"
-                    style={styles.startDateInput}
-                    value={draft(col.id).startDate}
-                    onChange={(e) => setDraft(col.id, { startDate: e.target.value })}
-                    title="Tanggal mulai manual — boleh tanggal yang sudah lewat atau tanggal mendatang"
-                  />
-                  <span style={styles.durationHint}>{startDateHint(draft(col.id).startDate)}</span>
-                </div>
-
-                <TypeSelect
-                  value={draft(col.id).cardType}
-                  options={cardTypes}
-                  qty={draft(col.id).qty}
-                  onChange={(v) => setDraft(col.id, { cardType: v })}
-                  onQtyChange={(v) => setDraft(col.id, { qty: v })}
-                  onAddOption={onAddCardType}
-                />
-
-                {isAdmin ? (
-                  <div>
-                    <div style={styles.involvedLabel}>Tim terlibat</div>
-                    <div style={styles.chipRow}>
-                      {members.map((m) => {
-                        const active = draft(col.id).involvedMembers.includes(m);
-                        return (
-                          <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(col.id, m)}>
-                            {m}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
-                )}
-
-                <div className="rw-duration-row" style={styles.durationRow}>
-                  <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft(col.id).amount} onChange={(e) => setDraft(col.id, { amount: e.target.value })} />
-                  <select style={styles.durationSelect} value={draft(col.id).unit} onChange={(e) => setDraft(col.id, { unit: e.target.value })}>
-                    <option value="menit">Menit</option>
-                    <option value="jam">Jam</option>
-                    <option value="hari">Hari</option>
-                  </select>
-                  <span style={styles.durationHint}>kosongkan = 1 hari</span>
-                  <button style={styles.submitCardBtn} onClick={() => submit(col.id)} title="Tambahkan kartu" aria-label="Tambahkan kartu">
-                    <Plus size={16} />
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         ))}
         <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id, viewMonth)}>
@@ -2954,8 +2954,8 @@ const styles = {
   monthTabActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff", fontWeight: 600 },
   monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#10B981" },
   monthTabLabel: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
-  columnsRow: { display: "flex", gap: 16, alignItems: "stretch", overflowX: "auto", overflowY: "hidden", paddingBottom: 20, flex: 1, minHeight: 0 },
-  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0, minHeight: 0 },
+  columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", overflowY: "hidden", paddingBottom: 20, flex: 1, minHeight: 0 },
+  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0, maxHeight: "100%" },
   columnDragOver: { boxShadow: "0 0 0 2px #3B82F6 inset" },
   columnHead: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
   columnDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
@@ -2995,7 +2995,7 @@ const styles = {
   durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "var(--surface-solid)", color: "var(--text-muted)" },
   durationOverdue: { background: "rgba(239,68,68,0.16)", color: "#EF4444" },
   durationDueSoon: { background: "rgba(245,158,11,0.16)", color: "#F59E0B" },
-  addCardRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
+  addCardRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 },
   addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box", color: "var(--text-primary)" },
   durationRow: { display: "flex", gap: 6 },
   durationInput: { width: 60, border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
