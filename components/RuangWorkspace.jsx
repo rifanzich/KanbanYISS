@@ -468,15 +468,7 @@ function findCardLocation(board, monthKey, cardId) {
 }
 
 function LogoMark({ size = 22 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="512" height="512" rx="112" fill="#111111" />
-      <rect x="120" y="288" width="72" height="128" rx="20" fill="#3B82F6" />
-      <rect x="220" y="216" width="72" height="200" rx="20" fill="#60A5FA" />
-      <rect x="320" y="144" width="72" height="272" rx="20" fill="#10B981" />
-      <path d="M337 258 L358 280 L400 232" stroke="#F4F2EC" strokeWidth="18" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
+  return <img src="/logo-mark.png" width={size} height={size} alt="Kanban" style={{ objectFit: "contain", flexShrink: 0, display: "block" }} />;
 }
 
 export default function RuangWorkspace() {

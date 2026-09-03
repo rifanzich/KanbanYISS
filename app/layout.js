@@ -3,7 +3,7 @@ export const metadata = {
   description: "Papan kanban, catatan, dan checklist tugas dalam satu portal.",
   manifest: "/manifest.json",
   icons: {
-    icon: "/icon.svg",
+    icon: "/icon.png",
     apple: "/apple-icon.png",
   },
 };
