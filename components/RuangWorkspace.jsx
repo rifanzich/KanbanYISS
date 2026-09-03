@@ -109,6 +109,13 @@ const DUE_SOON_MS = 12 * UNIT_MS.jam;
 // past months stay exactly as they were left.
 const MONTH_NAMES_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
+// Warna titik status kolom, gaya ClickUp — dipilih berdasar posisi kolom
+// (bukan nama), jadi tetap konsisten meski kolom di-rename atau ditambah.
+const COLUMN_DOT_COLORS = ["#9CA3AF", "#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4"];
+function columnDotColor(index) {
+  return COLUMN_DOT_COLORS[index % COLUMN_DOT_COLORS.length];
+}
+
 function monthKeyOf(year, monthIndex0) {
   return `${year}-${String(monthIndex0 + 1).padStart(2, "0")}`;
 }
@@ -357,36 +364,36 @@ function buildAndDownloadWorkbook(wsName, data) {
 
 const RESPONSIVE_CSS = `
 .rw-app[data-theme="light"] {
-  --app-bg: linear-gradient(135deg, #EFEDE6 0%, #F3E8D6 45%, #E7ECE3 100%);
-  --sidebar-bg: rgba(27,36,48,0.72);
+  --app-bg: #F4F4F5;
+  --sidebar-bg: #171717;
   --sidebar-border: rgba(255,255,255,0.08);
-  --surface: rgba(255,255,255,0.5);
-  --surface-solid: #F7F5F0;
-  --surface-strong: rgba(255,255,255,0.72);
-  --card-border: rgba(228,225,215,0.9);
-  --text-primary: #23262B;
-  --text-muted: #6B6E76;
-  --text-faint: #A8A59B;
-  --modal-bg: rgba(255,255,255,0.8);
+  --surface: #FFFFFF;
+  --surface-solid: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --card-border: #E4E4E7;
+  --text-primary: #18181B;
+  --text-muted: #71717A;
+  --text-faint: #A1A1AA;
+  --modal-bg: #FFFFFF;
   --modal-overlay: rgba(20,20,20,0.4);
-  --input-bg: rgba(255,255,255,0.55);
-  --input-border: #D4D0C3;
+  --input-bg: #FFFFFF;
+  --input-border: #D4D4D8;
 }
 .rw-app[data-theme="dark"] {
-  --app-bg: linear-gradient(135deg, #11151c 0%, #171c25 50%, #12161d 100%);
-  --sidebar-bg: rgba(9,12,17,0.65);
-  --sidebar-border: rgba(255,255,255,0.06);
-  --surface: rgba(255,255,255,0.045);
-  --surface-solid: #1b2028;
-  --surface-strong: rgba(255,255,255,0.065);
+  --app-bg: #181818;
+  --sidebar-bg: #0d0d0d;
+  --sidebar-border: rgba(255,255,255,0.07);
+  --surface: #1f1f1f;
+  --surface-solid: #232323;
+  --surface-strong: #292929;
   --card-border: rgba(255,255,255,0.09);
-  --text-primary: #ECEAE3;
-  --text-muted: #9A9DA5;
-  --text-faint: #6E727C;
-  --modal-bg: rgba(22,26,33,0.82);
-  --modal-overlay: rgba(0,0,0,0.6);
-  --input-bg: rgba(255,255,255,0.06);
-  --input-border: rgba(255,255,255,0.16);
+  --text-primary: #EDEDED;
+  --text-muted: #9A9A9A;
+  --text-faint: #6B6B6B;
+  --modal-bg: #1e1e1e;
+  --modal-overlay: rgba(0,0,0,0.65);
+  --input-bg: #262626;
+  --input-border: rgba(255,255,255,0.14);
 }
 .rw-glass { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .rw-sidebar { position: relative; transform: none; z-index: 30; }
@@ -408,7 +415,7 @@ const RESPONSIVE_CSS = `
 .rw-app button:hover:not(:disabled) { opacity: 0.85; }
 .rw-app button:active:not(:disabled) { opacity: 0.7; }
 .rw-app *:focus-visible {
-  outline: 2px solid #C48A2E;
+  outline: 2px solid #3B82F6;
   outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -448,10 +455,10 @@ function findCardLocation(board, monthKey, cardId) {
 function LogoMark({ size = 22 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="512" height="512" rx="112" fill="#1B2430" />
-      <rect x="120" y="288" width="72" height="128" rx="20" fill="#C48A2E" />
-      <rect x="220" y="216" width="72" height="200" rx="20" fill="#DDBB79" />
-      <rect x="320" y="144" width="72" height="272" rx="20" fill="#5B7553" />
+      <rect width="512" height="512" rx="112" fill="#111111" />
+      <rect x="120" y="288" width="72" height="128" rx="20" fill="#3B82F6" />
+      <rect x="220" y="216" width="72" height="200" rx="20" fill="#60A5FA" />
+      <rect x="320" y="144" width="72" height="272" rx="20" fill="#10B981" />
       <path d="M337 258 L358 280 L400 232" stroke="#F4F2EC" strokeWidth="18" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
@@ -492,7 +499,7 @@ export default function RuangWorkspace() {
   const [rosterPanelWsId, setRosterPanelWsId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState("dark");
   const [, forceTick] = useState(0);
 
   const requestConfirm = (message, onConfirm, options) =>
@@ -535,7 +542,7 @@ export default function RuangWorkspace() {
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href =
-      "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap";
+      "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap";
     document.head.appendChild(link);
   }, []);
 
@@ -2058,7 +2065,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
           <div
             key={col.id}
             className="rw-column"
-            style={{ ...styles.column, ...(dragOverCol === col.id ? styles.columnDragOver : {}) }}
+            style={{ ...styles.column, borderTop: `3px solid ${columnDotColor(colIndex)}`, ...(dragOverCol === col.id ? styles.columnDragOver : {}) }}
             onDragOver={(e) => {
               e.preventDefault();
               setDragOverCol(col.id);
@@ -2074,7 +2081,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
             }}
           >
             <div style={styles.columnHead}>
+              <span style={{ ...styles.columnDot, background: columnDotColor(colIndex) }} />
               <input style={styles.columnTitle} value={col.name} onChange={(e) => onRenameColumn(board.id, viewMonth, col.id, e.target.value)} />
+              <span style={{ ...styles.columnCountBadge, color: columnDotColor(colIndex) }}>{col.cardIds.length}</span>
               <button
                 style={styles.columnDelete}
                 onClick={() => {
@@ -2091,7 +2100,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                 if (!card) return null;
                 const info = getDurationInfo(card);
                 const involved = card.involvedMembers || [];
-                const accentColor = info ? (info.status === "overdue" ? "#B4402C" : info.status === "due_soon" ? "#C48A2E" : "#5B7553") : "transparent";
+                const accentColor = info ? (info.status === "overdue" ? "#EF4444" : info.status === "due_soon" ? "#F59E0B" : "#10B981") : "transparent";
                 return (
                   <div
                     key={cid}
@@ -2417,7 +2426,7 @@ function InsightView({ wsData }) {
                 <div
                   style={{
                     ...styles.donutOuter,
-                    background: `conic-gradient(#5B7553 0 ${donePct}%, #C48A2E ${donePct}% 100%)`,
+                    background: `conic-gradient(#10B981 0 ${donePct}%, #3B82F6 ${donePct}% 100%)`,
                   }}
                 >
                   <div style={styles.donutInner}>
@@ -2428,14 +2437,14 @@ function InsightView({ wsData }) {
 
                 <div style={styles.insightStats}>
                   <div style={styles.statCard}>
-                    <div style={{ ...styles.statDot, background: "#5B7553" }} />
+                    <div style={{ ...styles.statDot, background: "#10B981" }} />
                     <div>
                       <div style={styles.statNumber}>{done}</div>
                       <div style={styles.statLabel}>Selesai ({donePct}%)</div>
                     </div>
                   </div>
                   <div style={styles.statCard}>
-                    <div style={{ ...styles.statDot, background: "#C48A2E" }} />
+                    <div style={{ ...styles.statDot, background: "#3B82F6" }} />
                     <div>
                       <div style={styles.statNumber}>{inProgress}</div>
                       <div style={styles.statLabel}>Sedang Dikerjakan ({inProgressPct}%)</div>
@@ -2809,100 +2818,102 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 
 const styles = {
   app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "var(--app-bg)", color: "var(--text-primary)", position: "relative" },
-  topbar: { position: "fixed", top: 0, left: 0, right: 0, height: 56, background: "#1B2430", color: "#fff", alignItems: "center", gap: 12, padding: "0 14px", zIndex: 10 },
+  topbar: { position: "fixed", top: 0, left: 0, right: 0, height: 56, background: "#111111", color: "#fff", alignItems: "center", gap: 12, padding: "0 14px", zIndex: 10 },
   hamburgerBtn: { background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", padding: 4 },
-  topbarTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  topbarTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   loadingWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--app-bg)", fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-faint)" },
   loadingText: { fontSize: 14 },
 
-  authWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "linear-gradient(135deg, #1B2430 0%, #2A3B2E 55%, #3A2C18 100%)", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
-  authCard: { width: "100%", maxWidth: 340, background: "rgba(35,45,59,0.55)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 28, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" },
+  authWrap: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#111111", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
+  authCard: { width: "100%", maxWidth: 340, background: "#1c1c1c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 28, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" },
   authBrand: { display: "flex", alignItems: "baseline", gap: 8, justifyContent: "center" },
-  authBrandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "#fff" },
+  authBrandName: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 22, fontWeight: 700, color: "#fff" },
   authSubtitle: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", color: "#9CA0A8", marginBottom: 6 },
-  authHint: { fontSize: 12, lineHeight: 1.5, color: "#B7B5AD", background: "rgba(196,138,46,0.12)", border: "1px solid rgba(196,138,46,0.3)", borderRadius: 8, padding: "10px 12px" },
+  authHint: { fontSize: 12, lineHeight: 1.5, color: "#B7B5AD", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 8, padding: "10px 12px" },
   authInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 7, padding: "10px 12px", color: "#fff", fontSize: 14, outline: "none" },
-  authError: { color: "#E38585", fontSize: 12.5 },
-  authSubmitBtn: { background: "#C48A2E", color: "#1B2430", border: "none", borderRadius: 7, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
+  authError: { color: "#F87171", fontSize: 12.5 },
+  authSubmitBtn: { background: "#3B82F6", color: "#fff", border: "none", borderRadius: 7, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
 
-  sidebar: { width: 250, minWidth: 250, background: "var(--sidebar-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", borderRight: "1px solid var(--sidebar-border)", color: "#E7E5DE", display: "flex", flexDirection: "column", padding: "20px 14px", gap: 16, overflowY: "auto" },
+  sidebar: { width: 250, minWidth: 250, background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", color: "#D4D4D4", display: "flex", flexDirection: "column", padding: "20px 14px", gap: 16, overflowY: "auto" },
   brandRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   brand: { display: "flex", alignItems: "baseline", gap: 8, padding: "0 6px 6px 6px" },
-  brandMark: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, color: "#C48A2E" },
-  brandName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16.5, fontWeight: 600, letterSpacing: 0.1 },
+  brandMark: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 20, color: "#3B82F6" },
+  brandName: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 16.5, fontWeight: 700 },
   sidebarCloseBtn: { display: "none", background: "transparent", border: "none", color: "#fff", cursor: "pointer", alignItems: "center" },
 
   userRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 8 },
   userInfo: { display: "flex", flexDirection: "column", gap: 3 },
   userName: { fontSize: 13.5, fontWeight: 500 },
   userRoleBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, padding: "2px 6px", borderRadius: 10, background: "rgba(139,141,147,0.25)", color: "#B7B5AD", width: "fit-content" },
-  userRoleBadgeAdmin: { background: "rgba(196,138,46,0.28)", color: "#E3B570" },
+  userRoleBadgeAdmin: { background: "rgba(59,130,246,0.28)", color: "#60A5FA" },
   logoutBtn: { background: "transparent", border: "1px solid rgba(255,255,255,0.15)", color: "#C9C7BF", borderRadius: 6, padding: 6, cursor: "pointer", display: "flex", alignItems: "center" },
 
   wsGroup: { display: "flex", flexDirection: "column", gap: 6 },
   wsHead: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", color: "#7D818C", padding: "0 4px" },
   wsHeadLabel: {},
   wsItem: { display: "flex", alignItems: "center", gap: 5, padding: "8px 10px", borderRadius: 5, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  wsItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #C48A2E" },
+  wsItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #3B82F6" },
   wsBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, padding: "2px 6px", borderRadius: 10, background: "rgba(139,141,147,0.25)", color: "#B7B5AD", flexShrink: 0 },
-  wsBadgeTeam: { background: "rgba(196,138,46,0.28)", color: "#E3B570" },
-  iconBtnSmall: { background: "transparent", border: "none", color: "#9CB394", cursor: "pointer", display: "flex", alignItems: "center", padding: 2, flexShrink: 0 },
+  wsBadgeTeam: { background: "rgba(59,130,246,0.28)", color: "#60A5FA" },
+  iconBtnSmall: { background: "transparent", border: "none", color: "#34D399", cursor: "pointer", display: "flex", alignItems: "center", padding: 2, flexShrink: 0 },
   addWsPanel: { display: "flex", flexDirection: "column", gap: 8, padding: 10, background: "rgba(255,255,255,0.04)", borderRadius: 8, marginTop: 4 },
   addWsInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, padding: "6px 8px", color: "#fff", fontSize: 13, outline: "none" },
   modeToggle: { display: "flex", gap: 6 },
   modeBtn: { flex: 1, padding: "5px 0", fontSize: 11.5, borderRadius: 5, border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#B7B5AD", cursor: "pointer" },
-  modeBtnActive: { background: "#C48A2E", color: "#1B2430", border: "1px solid #C48A2E", fontWeight: 600 },
+  modeBtnActive: { background: "#3B82F6", color: "#fff", border: "1px solid #3B82F6", fontWeight: 600 },
   modeHint: { fontSize: 10.5, color: "#9CA0A8", lineHeight: 1.4 },
-  createWsBtn: { background: "#5B7553", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
+  createWsBtn: { background: "#10B981", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
   divider: { height: 1, background: "rgba(255,255,255,0.08)", margin: "2px 0" },
   insightNavItem: { display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 6, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  insightNavItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #C48A2E" },
+  insightNavItemActive: { background: "rgba(255,255,255,0.08)", color: "#fff", boxShadow: "inset 3px 0 0 #3B82F6" },
   tabGroup: { display: "flex", flexDirection: "column", gap: 6 },
   tab: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", padding: "6px 10px", borderRadius: "6px 6px 0 0", fontWeight: 500 },
-  tabGold: { background: "rgba(196,138,46,0.18)", color: "#E3B570" },
-  tabMoss: { background: "rgba(91,117,83,0.22)", color: "#9CB394" },
+  tabGold: { background: "rgba(59,130,246,0.18)", color: "#60A5FA" },
+  tabMoss: { background: "rgba(16,185,129,0.22)", color: "#34D399" },
   tabAdd: { background: "transparent", border: "1px solid currentColor", color: "inherit", borderRadius: 4, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
   list: { display: "flex", flexDirection: "column", gap: 2 },
   listItem: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 5, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
-  listItemActiveGold: { background: "rgba(196,138,46,0.28)", color: "#fff", boxShadow: "inset 3px 0 0 #E3B570" },
-  listItemActiveMoss: { background: "rgba(91,117,83,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #9CB394" },
+  listItemActiveGold: { background: "rgba(59,130,246,0.28)", color: "#fff", boxShadow: "inset 3px 0 0 #60A5FA" },
+  listItemActiveMoss: { background: "rgba(16,185,129,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #34D399" },
   listItemText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 },
   listItemDelete: { background: "transparent", border: "none", color: "inherit", opacity: 0.7, cursor: "pointer", padding: "0 2px", flexShrink: 0, display: "flex", alignItems: "center" },
   listEmpty: { fontSize: 12, color: "var(--text-muted)", padding: "6px 10px", fontStyle: "italic" },
   main: { flex: 1, overflow: "auto", padding: "28px 32px" },
-  teamBanner: { fontSize: 12, color: "#8A6A28", background: "rgba(196,138,46,0.12)", border: "1px solid rgba(196,138,46,0.3)", borderRadius: 6, padding: "8px 12px", marginBottom: 18, display: "inline-block" },
+  teamBanner: { fontSize: 12, color: "#2563EB", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 6, padding: "8px 12px", marginBottom: 18, display: "inline-block" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "var(--text-faint)", textAlign: "center" },
-  emptyTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "var(--text-primary)" },
+  emptyTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 22, color: "var(--text-primary)" },
   emptyText: { fontSize: 14, maxWidth: 340 },
   boardWrap: { display: "flex", flexDirection: "column", gap: 14, height: "100%" },
-  boardTitle: { fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", padding: "2px 0", width: "100%", boxSizing: "border-box" },
+  boardTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", padding: "2px 0", width: "100%", boxSizing: "border-box" },
   monthTabRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   monthNavBtn: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 6, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 15, flexShrink: 0 },
   monthTabScroll: { display: "flex", gap: 4, overflowX: "auto", flex: 1, minWidth: 0 },
   monthTab: { position: "relative", flexShrink: 0, border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer", textTransform: "uppercase" },
-  monthTabActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff", fontWeight: 600 },
-  monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#5B7553" },
-  monthTabLabel: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
+  monthTabActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff", fontWeight: 600 },
+  monthTabDot: { position: "absolute", top: 3, right: 3, width: 5, height: 5, borderRadius: "50%", background: "#10B981" },
+  monthTabLabel: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 14, color: "var(--text-primary)", marginLeft: 4, whiteSpace: "nowrap" },
   columnsRow: { display: "flex", gap: 16, alignItems: "flex-start", overflowX: "auto", paddingBottom: 20, flex: 1 },
-  column: { background: "var(--surface)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", border: "1px solid var(--card-border)", borderTop: "3px solid #C48A2E", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0 },
-  columnDragOver: { boxShadow: "0 0 0 2px #C48A2E inset" },
-  columnHead: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  columnTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", border: "none", background: "transparent", outline: "none", color: "var(--text-muted)", width: "85%" },
+  column: { background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: "10px", padding: 12, display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.06)", flexShrink: 0 },
+  columnDragOver: { boxShadow: "0 0 0 2px #3B82F6 inset" },
+  columnHead: { display: "flex", alignItems: "center", gap: 6 },
+  columnDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+  columnTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 0.8, textTransform: "uppercase", border: "none", background: "transparent", outline: "none", color: "var(--text-muted)", flex: 1, minWidth: 0 },
+  columnCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, flexShrink: 0 },
   columnDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
   cardStack: { display: "flex", flexDirection: "column", gap: 8 },
-  card: { background: "var(--surface-strong)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)" },
+  card: { background: "var(--surface-strong)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 2px 8px rgba(35,38,43,0.06)", cursor: "grab", border: "1px solid var(--card-border)" },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 },
   cardTopActions: { display: "flex", alignItems: "center", gap: 2, flexShrink: 0 },
   checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1, minWidth: 0 },
   checkbox: { marginTop: 3, cursor: "pointer", flexShrink: 0 },
   cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700, wordBreak: "break-word" },
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
-  cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #C48A2E", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
+  cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #3B82F6", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
   cardEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
   typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
-  typeCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: "#fff", background: "#C48A2E", borderRadius: 10, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 },
+  typeCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: "#fff", background: "#3B82F6", borderRadius: 10, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 },
   typeQtyInput: { width: 40, border: "1px solid var(--card-border)", borderRadius: 5, background: "var(--input-bg)", fontSize: 11.5, color: "var(--text-primary)", outline: "none", padding: "4px 4px", textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0, boxSizing: "border-box" },
   assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
@@ -2911,14 +2922,14 @@ const styles = {
   involvedLabel: { fontSize: 10.5, color: "var(--text-faint)", marginTop: 2 },
   chipRow: { display: "flex", flexWrap: "wrap", gap: 5 },
   chip: { border: "1px solid var(--card-border)", background: "var(--surface-strong)", color: "var(--text-muted)", borderRadius: 12, padding: "3px 9px", fontSize: 10.5, cursor: "pointer" },
-  chipActive: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
+  chipActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
   typeAddRow: { display: "flex", gap: 6 },
   addTypeInput: { flex: 1, border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
-  addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#5B7553", color: "#fff", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
+  addTypeConfirmBtn: { border: "none", borderRadius: 6, background: "#10B981", color: "#fff", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
   addTypeCancelBtn: { border: "1px solid var(--input-border)", borderRadius: 6, background: "transparent", color: "var(--text-faint)", padding: "0 8px", cursor: "pointer", display: "flex", alignItems: "center" },
   durationPill: { alignSelf: "flex-start", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: "3px 7px", borderRadius: 10, background: "var(--surface-solid)", color: "var(--text-muted)" },
-  durationOverdue: { background: "#FBE7E4", color: "#B4402C" },
-  durationDueSoon: { background: "#FCF0DA", color: "#9A6A15" },
+  durationOverdue: { background: "rgba(239,68,68,0.16)", color: "#EF4444" },
+  durationDueSoon: { background: "rgba(245,158,11,0.16)", color: "#F59E0B" },
   addCardRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
   addCardInput: { width: "100%", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "transparent", outline: "none", fontFamily: "'Inter', system-ui, sans-serif", boxSizing: "border-box", color: "var(--text-primary)" },
   durationRow: { display: "flex", gap: 6 },
@@ -2926,69 +2937,69 @@ const styles = {
   startDateRow: { display: "flex", alignItems: "center", gap: 6 },
   startDateInput: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 8px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)", fontFamily: "'IBM Plex Mono', monospace" },
   durationSelect: { border: "1px solid var(--input-border)", borderRadius: 6, padding: "6px 4px", fontSize: 12, outline: "none", background: "var(--input-bg)", color: "var(--text-primary)" },
-  durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
+  durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
   durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
-  submitCardBtn: { border: "none", borderRadius: 6, background: "#C48A2E", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
+  submitCardBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
   addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "var(--text-faint)", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
   noteWrap: { display: "flex", flexDirection: "column", gap: 6, height: "100%", maxWidth: 720 },
-  noteTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)" },
+  noteTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)" },
   noteMeta: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "var(--text-faint)", marginBottom: 10 },
   noteBody: { flex: 1, border: "none", outline: "none", background: "transparent", resize: "none", fontSize: 15.5, lineHeight: 1.7, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" },
 
   insightWrap: { display: "flex", flexDirection: "column", gap: 6, maxWidth: 780 },
   insightHeaderRow: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 },
-  insightTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
+  insightTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 26, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
   insightModeToggle: { display: "flex", gap: 6, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 9, padding: 3 },
   insightModeBtn: { border: "none", background: "transparent", color: "var(--text-muted)", borderRadius: 6, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
-  insightModeBtnActive: { background: "#C48A2E", color: "#fff", fontWeight: 600 },
+  insightModeBtnActive: { background: "#3B82F6", color: "#fff", fontWeight: 600 },
   monthPickerRow: { display: "flex", alignItems: "center", gap: 6, margin: "4px 0 10px" },
   insightSubtitle: { fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 6 },
   insightSubtitleSmall: { fontSize: 12, color: "var(--text-faint)", marginBottom: 6 },
   compareControls: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, margin: "6px 0 18px" },
   compareMonthPicker: { display: "flex", flexWrap: "wrap", gap: 6 },
   compareMonthChip: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 12, padding: "5px 12px", fontSize: 12, cursor: "pointer" },
-  compareMonthChipActive: { background: "#5B7553", borderColor: "#5B7553", color: "#fff" },
+  compareMonthChipActive: { background: "#10B981", borderColor: "#10B981", color: "#fff" },
   compareChart: { display: "flex", alignItems: "flex-end", gap: 18, height: 220, padding: "18px 10px 0", borderBottom: "1px solid var(--card-border)", overflowX: "auto" },
   compareBarCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 64, height: "100%", justifyContent: "flex-end" },
-  compareBarValue: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
+  compareBarValue: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
   compareBarTrack: { width: 34, flex: 1, display: "flex", alignItems: "flex-end", background: "var(--surface-solid)", borderRadius: 6, overflow: "hidden" },
-  compareBarFill: { width: "100%", background: "linear-gradient(180deg, #DDBB79, #C48A2E)", borderRadius: "6px 6px 0 0", transition: "height 0.3s ease" },
+  compareBarFill: { width: "100%", background: "linear-gradient(180deg, #60A5FA, #3B82F6)", borderRadius: "6px 6px 0 0", transition: "height 0.3s ease" },
   compareBarLabel: { fontSize: 11, color: "var(--text-muted)", textAlign: "center", whiteSpace: "nowrap" },
   compareSummaryText: { fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6, marginTop: 14 },
   insightSectionDivider: { height: 1, background: "var(--card-border)", margin: "26px 0 18px" },
   insightSectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 4 },
-  insightSectionTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: "'Fraunces', Georgia, serif", fontSize: 18, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
+  insightSectionTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 18, fontWeight: 600, color: "var(--text-primary)", margin: 0 },
   insightTypeSelect: { border: "1px solid var(--card-border)", borderRadius: 8, background: "var(--surface-solid)", color: "var(--text-primary)", fontSize: 12.5, padding: "7px 10px", outline: "none", cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   insightTypeGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, marginTop: 12 },
   insightTypeCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 4 },
-  insightTypeCardHighlight: { borderColor: "#C48A2E", boxShadow: "0 0 0 1px #C48A2E inset" },
-  insightTypeCardCount: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
+  insightTypeCardHighlight: { borderColor: "#3B82F6", boxShadow: "0 0 0 1px #3B82F6 inset" },
+  insightTypeCardCount: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 26, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
   insightTypeCardName: { fontSize: 12, color: "var(--text-muted)", lineHeight: 1.35 },
   memberStatsTable: { display: "flex", flexDirection: "column", gap: 10, marginTop: 12 },
   memberStatsRow: { display: "flex", alignItems: "center", gap: 14, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "10px 16px" },
   memberStatsName: { fontSize: 13, fontWeight: 600, color: "var(--text-primary)", width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   memberStatsBarTrack: { flex: 1, height: 8, borderRadius: 4, background: "var(--card-border)", overflow: "hidden", minWidth: 60 },
-  memberStatsBarFill: { height: "100%", background: "linear-gradient(90deg, #5B7553, #7FA06E)", borderRadius: 4, transition: "width 0.3s ease" },
+  memberStatsBarFill: { height: "100%", background: "linear-gradient(90deg, #10B981, #34D399)", borderRadius: 4, transition: "width 0.3s ease" },
   memberStatsNums: { display: "flex", gap: 10, flexShrink: 0, fontSize: 11.5 },
-  memberStatsDone: { color: "#5B7553", fontWeight: 600, whiteSpace: "nowrap" },
-  memberStatsProgress: { color: "#9A6A15", fontWeight: 600, whiteSpace: "nowrap" },
+  memberStatsDone: { color: "#10B981", fontWeight: 600, whiteSpace: "nowrap" },
+  memberStatsProgress: { color: "#F59E0B", fontWeight: 600, whiteSpace: "nowrap" },
   insightEmpty: { fontSize: 14, color: "var(--text-faint)", fontStyle: "italic", padding: "24px 0" },
   insightBody: { display: "flex", alignItems: "center", gap: 40, flexWrap: "wrap" },
   donutOuter: { width: 220, height: 220, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 10px 26px rgba(35,38,43,0.14)" },
   donutInner: { width: 150, height: 150, borderRadius: "50%", background: "var(--surface-solid)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.04)" },
-  donutTotal: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 700, color: "var(--text-primary)" },
+  donutTotal: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 34, fontWeight: 700, color: "var(--text-primary)" },
   donutTotalLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", marginTop: 2 },
   insightStats: { display: "flex", flexDirection: "column", gap: 14 },
   statCard: { display: "flex", alignItems: "center", gap: 12, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 18px", minWidth: 220 },
   statDot: { width: 14, height: 14, borderRadius: "50%", flexShrink: 0 },
-  statNumber: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
+  statNumber: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 22, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.1 },
   statLabel: { fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 },
   insightSummaryCard: { marginTop: 26, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "16px 20px", maxWidth: 560 },
   insightSummaryLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 },
   insightSummaryText: { fontSize: 14, lineHeight: 1.7, color: "var(--text-primary)" },
 
-  fab: { position: "fixed", bottom: 22, right: 22, width: 52, height: 52, borderRadius: "50%", background: "#C48A2E", color: "#fff", border: "none", boxShadow: "0 4px 14px rgba(196,138,46,0.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 40 },
-  memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
+  fab: { position: "fixed", bottom: 22, right: 22, width: 52, height: 52, borderRadius: "50%", background: "#3B82F6", color: "#fff", border: "none", boxShadow: "0 4px 14px rgba(59,130,246,0.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 40 },
+  memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
   memberPanelTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   memberList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" },
   memberRow: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, padding: "4px 6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
@@ -2996,26 +3007,26 @@ const styles = {
   memberDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
   memberAddRow: { display: "flex", flexDirection: "column", gap: 6 },
   memberInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, padding: "6px 8px", color: "#fff", fontSize: 13, outline: "none" },
-  memberAddBtn: { background: "#5B7553", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
+  memberAddBtn: { background: "#10B981", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
 
-  bellBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#1B2430", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
-  bellBadge: { position: "absolute", top: -3, right: -3, background: "#B4402C", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
-  notifPanel: { position: "fixed", top: 62, right: 14, width: 290, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 50, display: "flex", flexDirection: "column", gap: 10 },
+  bellBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#111111", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
+  bellBadge: { position: "absolute", top: -3, right: -3, background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
+  notifPanel: { position: "fixed", top: 62, right: 14, width: 290, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 50, display: "flex", flexDirection: "column", gap: 10 },
   notifTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   notifEmpty: { fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" },
   notifGroup: { display: "flex", flexDirection: "column", gap: 5 },
-  notifGroupLabelOverdue: { fontSize: 11, fontWeight: 600, color: "#E38585" },
-  notifGroupLabelSoon: { fontSize: 11, fontWeight: 600, color: "#E3B570" },
+  notifGroupLabelOverdue: { fontSize: 11, fontWeight: 600, color: "#F87171" },
+  notifGroupLabelSoon: { fontSize: 11, fontWeight: 600, color: "#60A5FA" },
   notifItem: { background: "rgba(255,255,255,0.05)", borderRadius: 7, padding: "8px 10px", cursor: "pointer" },
   notifItemText: { fontSize: 12.5, marginBottom: 2 },
   notifItemMeta: { fontSize: 10.5, color: "var(--text-muted)" },
 
   modalBackdrop: { position: "fixed", inset: 0, background: "var(--modal-overlay)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
-  modalBox: { background: "var(--modal-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid var(--card-border)", borderRadius: 14, padding: 20, width: "100%", maxWidth: 340, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", display: "flex", flexDirection: "column", gap: 16 },
+  modalBox: { background: "var(--modal-bg)", border: "1px solid var(--card-border)", borderRadius: 14, padding: 20, width: "100%", maxWidth: 340, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", display: "flex", flexDirection: "column", gap: 16 },
   modalMessage: { fontSize: 14.5, lineHeight: 1.5, color: "var(--text-primary)" },
   modalActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
   modalCancel: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
-  modalConfirm: { background: "#B4402C", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+  modalConfirm: { background: "#EF4444", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 
   calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620 },
   calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0 14px" },
@@ -3036,12 +3047,12 @@ const styles = {
     fontSize: 13,
     color: "var(--text-primary)",
   },
-  calendarDayCellToday: { borderColor: "#5B7553", boxShadow: "0 0 0 1px #5B7553 inset" },
-  calendarDayCellSelected: { background: "#C48A2E", borderColor: "#C48A2E", color: "#fff" },
+  calendarDayCellToday: { borderColor: "#10B981", boxShadow: "0 0 0 1px #10B981 inset" },
+  calendarDayCellSelected: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
   calendarDayNum: { fontWeight: 600 },
-  calendarDayBadge: { position: "absolute", top: 3, right: 3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, color: "#fff", background: "#B4402C", borderRadius: 8, minWidth: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" },
+  calendarDayBadge: { position: "absolute", top: 3, right: 3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, color: "#fff", background: "#EF4444", borderRadius: 8, minWidth: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" },
   calendarPanel: { marginTop: 20, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 },
-  calendarPanelTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 16, fontWeight: 600, color: "var(--text-primary)" },
+  calendarPanelTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 16, fontWeight: 600, color: "var(--text-primary)" },
   calendarNoteList: { display: "flex", flexDirection: "column", gap: 8 },
   calendarNoteItem: { display: "flex", alignItems: "center", gap: 10, background: "var(--surface-strong)", border: "1px solid var(--card-border)", borderRadius: 8, padding: "8px 10px" },
   calendarNoteMeta: { fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0, whiteSpace: "nowrap" },
