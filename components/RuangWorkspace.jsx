@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag, ChevronLeft, ChevronRight, Smartphone } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -508,9 +508,57 @@ export default function RuangWorkspace() {
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [theme, setTheme] = useState("dark");
   const [, forceTick] = useState(0);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [isStandaloneMode, setIsStandaloneMode] = useState(false);
+  const [showIosInstallHint, setShowIosInstallHint] = useState(false);
+  const [isIOSDevice, setIsIOSDevice] = useState(false);
 
   const requestConfirm = (message, onConfirm, options) =>
     setConfirmDialog({ message, onConfirm, confirmLabel: options?.confirmLabel, onCancel: options?.onCancel });
+
+  // Register the service worker (needed for the "install to phone" / PWA
+  // prompt) and listen for the browser's install-availability signals.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+    setIsStandaloneMode(!!standalone);
+    setIsIOSDevice(/iphone|ipad|ipod/i.test(window.navigator.userAgent || ""));
+
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPromptEvent(e);
+    };
+    const handleAppInstalled = () => {
+      setInstallPromptEvent(null);
+      setIsStandaloneMode(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  const canShowInstallButton = !isStandaloneMode && (!!installPromptEvent || isIOSDevice);
+
+  const handleInstallClick = async () => {
+    if (installPromptEvent) {
+      installPromptEvent.prompt();
+      try {
+        await installPromptEvent.userChoice;
+      } catch (e) {}
+      setInstallPromptEvent(null);
+    } else if (isIOSDevice) {
+      setShowIosInstallHint(true);
+    }
+  };
 
   // Load the roster of registered usernames once logged in (used for tagging
   // "anggota terlibat" and for building/managing team workspace rosters).
@@ -1213,6 +1261,8 @@ export default function RuangWorkspace() {
         onLogout={handleLogout}
         theme={theme}
         onToggleTheme={toggleTheme}
+        canInstall={canShowInstallButton}
+        onInstallClick={handleInstallClick}
         isAdmin={isAdmin}
         accounts={accounts}
         showAccountPanel={showAccountPanel}
@@ -1391,6 +1441,27 @@ export default function RuangWorkspace() {
           </div>
         </div>
       )}
+
+      {showIosInstallHint && (
+        <div style={styles.modalBackdrop} onClick={() => setShowIosInstallHint(false)}>
+          <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalMessage}>
+              Untuk memasang aplikasi ini di iPhone/iPad:
+              <br />
+              1. Ketuk ikon <strong>Share</strong> (kotak dengan panah ke atas) di bar Safari.
+              <br />
+              2. Pilih <strong>&quot;Add to Home Screen&quot;</strong> / &quot;Tambah ke Layar Utama&quot;.
+              <br />
+              3. Ketuk <strong>Tambah</strong>, dan ikon aplikasi akan muncul di layar utama HP.
+            </div>
+            <div style={styles.modalActions}>
+              <button style={styles.modalOk} onClick={() => setShowIosInstallHint(false)}>
+                Mengerti
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1430,6 +1501,8 @@ function Sidebar({
   onLogout,
   theme,
   onToggleTheme,
+  canInstall,
+  onInstallClick,
   isAdmin,
   accounts,
   showAccountPanel,
@@ -1499,6 +1572,11 @@ function Sidebar({
           <span style={{ ...styles.userRoleBadge, ...(isAdmin ? styles.userRoleBadgeAdmin : {}) }}>{isAdmin ? "Admin" : "Anggota"}</span>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
+          {canInstall && (
+            <button style={styles.logoutBtn} onClick={onInstallClick} title="Pasang aplikasi ke HP">
+              <Smartphone size={15} />
+            </button>
+          )}
           <button style={styles.logoutBtn} onClick={onToggleTheme} title={theme === "light" ? "Mode gelap" : "Mode terang"}>
             {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
           </button>
@@ -3120,6 +3198,7 @@ const styles = {
   modalActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
   modalCancel: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
   modalConfirm: { background: "#EF4444", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+  modalOk: { background: "#3B82F6", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 
   calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620 },
   calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0 14px" },
