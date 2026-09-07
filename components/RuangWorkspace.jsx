@@ -52,6 +52,9 @@ const DEFAULT_CARD_TYPES = [
   "Desain Poster Divisi",
 ];
 
+const MOOD_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#EDE9FE", "#FFE4E6", "#E0F2FE", "#FFEDD5"];
+const MINDMAP_PALETTE = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
+
 function formatCreatedDate(ts) {
   try {
     return new Date(ts).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -163,6 +166,10 @@ const emptyWorkspaceData = () => ({
   boardOrder: [],
   notes: {},
   noteOrder: [],
+  moodboards: {},
+  moodboardOrder: [],
+  mindmaps: {},
+  mindmapOrder: [],
   cardTypes: [...DEFAULT_CARD_TYPES],
   calendarNotes: {},
   active: { type: "none" },
@@ -196,6 +203,10 @@ const sampleWorkspaceData = () => {
     boardOrder: [boardId],
     notes: {},
     noteOrder: [],
+    moodboards: {},
+    moodboardOrder: [],
+    mindmaps: {},
+    mindmapOrder: [],
     cardTypes: [...DEFAULT_CARD_TYPES],
     calendarNotes: {},
     active: { type: "board", id: boardId },
@@ -207,6 +218,10 @@ function normalizeWsData(raw) {
   const cardTypes = base.cardTypes && base.cardTypes.length ? base.cardTypes : [...DEFAULT_CARD_TYPES];
   const calendarNotes = base.calendarNotes || {};
   const boards = { ...(base.boards || {}) };
+  const moodboards = { ...(base.moodboards || {}) };
+  const moodboardOrder = base.moodboardOrder || Object.keys(moodboards);
+  const mindmaps = { ...(base.mindmaps || {}) };
+  const mindmapOrder = base.mindmapOrder || Object.keys(mindmaps);
 
   // Normalizes one month's { columns, cards } bucket: fills in defaults that
   // older cards may be missing (involvedMembers/cardType/qty/startedAt).
@@ -245,7 +260,27 @@ function normalizeWsData(raw) {
     boards[bid] = { id: board.id, name: board.name, monthly };
   });
 
-  return { ...base, cardTypes, calendarNotes, boards };
+  Object.keys(moodboards).forEach((mid) => {
+    const mb = moodboards[mid];
+    const items = mb.items || {};
+    Object.keys(items).forEach((iid) => {
+      const it = items[iid];
+      items[iid] = { id: iid, text: it.text || "", x: Number(it.x) || 0, y: Number(it.y) || 0, color: it.color || MOOD_COLORS[0] };
+    });
+    moodboards[mid] = { id: mb.id || mid, title: mb.title || "Moodboard", items, itemOrder: mb.itemOrder && mb.itemOrder.length ? mb.itemOrder.filter((iid) => items[iid]) : Object.keys(items) };
+  });
+
+  Object.keys(mindmaps).forEach((mmid) => {
+    const mm = mindmaps[mmid];
+    const nodes = mm.nodes || {};
+    Object.keys(nodes).forEach((nid) => {
+      const n = nodes[nid];
+      nodes[nid] = { id: nid, text: n.text || "", x: Number(n.x) || 0, y: Number(n.y) || 0, color: n.color || MINDMAP_PALETTE[0], parentId: n.parentId || null };
+    });
+    mindmaps[mmid] = { id: mm.id || mmid, title: mm.title || "Mind Map", rootId: mm.rootId, nodes };
+  });
+
+  return { ...base, cardTypes, calendarNotes, boards, moodboards, moodboardOrder, mindmaps, mindmapOrder };
 }
 
 function useDebouncedSave(key, value, shared, ready) {
@@ -432,6 +467,18 @@ const RESPONSIVE_CSS = `
 .rw-app *:focus-visible {
   outline: 2px solid #3B82F6;
   outline-offset: 2px;
+}
+.rw-app, .rw-app * {
+  -webkit-tap-highlight-color: transparent;
+}
+.rw-calendar-day {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  outline: none;
+}
+.rw-calendar-day:focus, .rw-calendar-day:focus-visible {
+  outline: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .rw-card, .rw-app button, .rw-app select, .rw-app input, .rw-sidebar { transition: none !important; }
@@ -975,7 +1022,21 @@ export default function RuangWorkspace() {
   const activeNote = wsData.active.type === "note" ? wsData.notes[wsData.active.id] : null;
   const activeInsight = wsData.active.type === "insight";
   const activeCalendar = wsData.active.type === "calendar";
-  const currentTitle = activeBoard ? activeBoard.name : activeNote ? activeNote.title || "Tanpa judul" : activeInsight ? "Insight" : activeCalendar ? "Kalender" : "Kanban YISS";
+  const activeMoodboard = wsData.active.type === "moodboard" ? wsData.moodboards[wsData.active.id] : null;
+  const activeMindmap = wsData.active.type === "mindmap" ? wsData.mindmaps[wsData.active.id] : null;
+  const currentTitle = activeBoard
+    ? activeBoard.name
+    : activeNote
+    ? activeNote.title || "Tanpa judul"
+    : activeInsight
+    ? "Insight"
+    : activeCalendar
+    ? "Kalender"
+    : activeMoodboard
+    ? activeMoodboard.title || "Moodboard"
+    : activeMindmap
+    ? activeMindmap.title || "Mind Map"
+    : "Kanban YISS";
   const { overdue, dueSoon } = collectUrgentCards(wsData);
   const urgentCount = overdue.length + dueSoon.length;
 
@@ -1235,6 +1296,157 @@ export default function RuangWorkspace() {
     });
   };
 
+  // ---- Moodboard actions ----
+  const addMoodboard = () => {
+    const id = uid();
+    setWsData((d) => ({
+      ...d,
+      moodboards: { ...d.moodboards, [id]: { id, title: "Moodboard Baru", items: {}, itemOrder: [] } },
+      moodboardOrder: [...d.moodboardOrder, id],
+      active: { type: "moodboard", id },
+    }));
+  };
+
+  const deleteMoodboard = (id) => {
+    setWsData((d) => {
+      const moodboards = { ...d.moodboards };
+      delete moodboards[id];
+      const moodboardOrder = d.moodboardOrder.filter((m) => m !== id);
+      const active =
+        d.active.type === "moodboard" && d.active.id === id
+          ? moodboardOrder.length
+            ? { type: "moodboard", id: moodboardOrder[0] }
+            : { type: "none" }
+          : d.active;
+      return { ...d, moodboards, moodboardOrder, active };
+    });
+  };
+
+  const updateMoodboardTitle = (id, title) => {
+    setWsData((d) => ({ ...d, moodboards: { ...d.moodboards, [id]: { ...d.moodboards[id], title } } }));
+  };
+
+  const addMoodboardItem = (boardId) => {
+    setWsData((d) => {
+      const board = d.moodboards[boardId];
+      if (!board) return d;
+      const id = uid();
+      const idx = board.itemOrder.length;
+      const item = { id, text: "", x: 24 + (idx % 5) * 36, y: 24 + (idx % 5) * 36, color: MOOD_COLORS[idx % MOOD_COLORS.length] };
+      return { ...d, moodboards: { ...d.moodboards, [boardId]: { ...board, items: { ...board.items, [id]: item }, itemOrder: [...board.itemOrder, id] } } };
+    });
+  };
+
+  const updateMoodboardItem = (boardId, itemId, patch) => {
+    setWsData((d) => {
+      const board = d.moodboards[boardId];
+      if (!board || !board.items[itemId]) return d;
+      return { ...d, moodboards: { ...d.moodboards, [boardId]: { ...board, items: { ...board.items, [itemId]: { ...board.items[itemId], ...patch } } } } };
+    });
+  };
+
+  const deleteMoodboardItem = (boardId, itemId) => {
+    setWsData((d) => {
+      const board = d.moodboards[boardId];
+      if (!board) return d;
+      const items = { ...board.items };
+      delete items[itemId];
+      const itemOrder = board.itemOrder.filter((i) => i !== itemId);
+      return { ...d, moodboards: { ...d.moodboards, [boardId]: { ...board, items, itemOrder } } };
+    });
+  };
+
+  const bringMoodboardItemFront = (boardId, itemId) => {
+    setWsData((d) => {
+      const board = d.moodboards[boardId];
+      if (!board || board.itemOrder[board.itemOrder.length - 1] === itemId) return d;
+      const itemOrder = [...board.itemOrder.filter((i) => i !== itemId), itemId];
+      return { ...d, moodboards: { ...d.moodboards, [boardId]: { ...board, itemOrder } } };
+    });
+  };
+
+  // ---- Mind map actions ----
+  const addMindmap = () => {
+    const id = uid();
+    const rootId = uid();
+    setWsData((d) => ({
+      ...d,
+      mindmaps: {
+        ...d.mindmaps,
+        [id]: {
+          id,
+          title: "Mind Map Baru",
+          rootId,
+          nodes: { [rootId]: { id: rootId, text: "Topik Utama", x: 640, y: 380, color: MINDMAP_PALETTE[0], parentId: null } },
+        },
+      },
+      mindmapOrder: [...d.mindmapOrder, id],
+      active: { type: "mindmap", id },
+    }));
+  };
+
+  const deleteMindmap = (id) => {
+    setWsData((d) => {
+      const mindmaps = { ...d.mindmaps };
+      delete mindmaps[id];
+      const mindmapOrder = d.mindmapOrder.filter((m) => m !== id);
+      const active =
+        d.active.type === "mindmap" && d.active.id === id
+          ? mindmapOrder.length
+            ? { type: "mindmap", id: mindmapOrder[0] }
+            : { type: "none" }
+          : d.active;
+      return { ...d, mindmaps, mindmapOrder, active };
+    });
+  };
+
+  const updateMindmapTitle = (id, title) => {
+    setWsData((d) => ({ ...d, mindmaps: { ...d.mindmaps, [id]: { ...d.mindmaps[id], title } } }));
+  };
+
+  const addMindmapNode = (mapId, parentId) => {
+    setWsData((d) => {
+      const map = d.mindmaps[mapId];
+      const parent = map?.nodes[parentId];
+      if (!map || !parent) return d;
+      const siblings = Object.values(map.nodes).filter((n) => n.parentId === parentId);
+      const color = parentId === map.rootId ? MINDMAP_PALETTE[siblings.length % MINDMAP_PALETTE.length] : parent.color;
+      const dy = (siblings.length % 2 === 0 ? 1 : -1) * Math.ceil((siblings.length + 1) / 2) * 90;
+      const id = uid();
+      const newNode = { id, text: "Cabang Baru", x: parent.x + 220, y: parent.y + dy, color, parentId };
+      return { ...d, mindmaps: { ...d.mindmaps, [mapId]: { ...map, nodes: { ...map.nodes, [id]: newNode } } } };
+    });
+  };
+
+  const updateMindmapNode = (mapId, nodeId, patch) => {
+    setWsData((d) => {
+      const map = d.mindmaps[mapId];
+      if (!map || !map.nodes[nodeId]) return d;
+      return { ...d, mindmaps: { ...d.mindmaps, [mapId]: { ...map, nodes: { ...map.nodes, [nodeId]: { ...map.nodes[nodeId], ...patch } } } } };
+    });
+  };
+
+  const deleteMindmapNode = (mapId, nodeId) => {
+    setWsData((d) => {
+      const map = d.mindmaps[mapId];
+      if (!map || nodeId === map.rootId) return d;
+      const toDelete = new Set([nodeId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        Object.values(map.nodes).forEach((n) => {
+          if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
+            toDelete.add(n.id);
+            changed = true;
+          }
+        });
+      }
+      const nodes = { ...map.nodes };
+      toDelete.forEach((nid) => delete nodes[nid]);
+      return { ...d, mindmaps: { ...d.mindmaps, [mapId]: { ...map, nodes } } };
+    });
+  };
+
   const goToUrgentCard = (item) => {
     setActiveWsId((cur) => cur); // no-op, already in this workspace
     setActive({ type: "board", id: item.boardId });
@@ -1324,10 +1536,22 @@ export default function RuangWorkspace() {
           setActive({ type: "calendar" });
           closeSidebar();
         }}
+        onSelectMoodboard={(id) => {
+          setActive({ type: "moodboard", id });
+          closeSidebar();
+        }}
+        onSelectMindmap={(id) => {
+          setActive({ type: "mindmap", id });
+          closeSidebar();
+        }}
         onAddBoard={addBoard}
         onAddNote={addNote}
+        onAddMoodboard={addMoodboard}
+        onAddMindmap={addMindmap}
         onDeleteBoard={deleteBoard}
         onDeleteNote={deleteNote}
+        onDeleteMoodboard={deleteMoodboard}
+        onDeleteMindmap={deleteMindmap}
       />
       <main className="rw-main" style={styles.main}>
         {activeWs?.mode === "team" && (
@@ -1372,10 +1596,29 @@ export default function RuangWorkspace() {
             onRequestConfirm={requestConfirm}
           />
         )}
-        {!activeBoard && !activeNote && !activeInsight && !activeCalendar && (
+        {activeMoodboard && (
+          <MoodboardView
+            board={activeMoodboard}
+            onUpdateTitle={(title) => updateMoodboardTitle(activeMoodboard.id, title)}
+            onAddItem={() => addMoodboardItem(activeMoodboard.id)}
+            onUpdateItem={(itemId, patch) => updateMoodboardItem(activeMoodboard.id, itemId, patch)}
+            onDeleteItem={(itemId) => requestConfirm("Hapus kartu ini?", () => deleteMoodboardItem(activeMoodboard.id, itemId))}
+            onBringFront={(itemId) => bringMoodboardItemFront(activeMoodboard.id, itemId)}
+          />
+        )}
+        {activeMindmap && (
+          <MindMapView
+            map={activeMindmap}
+            onUpdateTitle={(title) => updateMindmapTitle(activeMindmap.id, title)}
+            onAddNode={(parentId) => addMindmapNode(activeMindmap.id, parentId)}
+            onUpdateNode={(nodeId, patch) => updateMindmapNode(activeMindmap.id, nodeId, patch)}
+            onDeleteNode={(nodeId) => requestConfirm("Hapus cabang ini beserta semua turunannya?", () => deleteMindmapNode(activeMindmap.id, nodeId))}
+          />
+        )}
+        {!activeBoard && !activeNote && !activeInsight && !activeCalendar && !activeMoodboard && !activeMindmap && (
           <div style={styles.empty}>
             <div style={styles.emptyTitle}>Belum ada yang dipilih</div>
-            <div style={styles.emptyText}>Buat papan untuk melacak pekerjaan, atau catatan untuk menulis ide.</div>
+            <div style={styles.emptyText}>Buat papan untuk melacak pekerjaan, catatan untuk menulis ide, moodboard untuk kumpulkan inspirasi, atau mind map untuk memetakan gagasan.</div>
           </div>
         )}
       </main>
@@ -1549,10 +1792,16 @@ function Sidebar({
   onSelectNote,
   onSelectInsight,
   onSelectCalendar,
+  onSelectMoodboard,
+  onSelectMindmap,
   onAddBoard,
   onAddNote,
+  onAddMoodboard,
+  onAddMindmap,
   onDeleteBoard,
   onDeleteNote,
+  onDeleteMoodboard,
+  onDeleteMindmap,
 }) {
   return (
     <aside className={`rw-sidebar ${sidebarOpen ? "open" : ""}`} style={styles.sidebar}>
@@ -1867,6 +2116,68 @@ function Sidebar({
             );
           })}
           {wsData.noteOrder.length === 0 && <div style={styles.listEmpty}>Belum ada catatan</div>}
+        </div>
+      </div>
+
+      <div style={styles.tabGroup}>
+        <div style={{ ...styles.tab, ...styles.tabRose }}>
+          <span>Moodboard</span>
+          <button style={styles.tabAdd} onClick={onAddMoodboard} title="Tambah moodboard">
+            <Plus size={13} />
+          </button>
+        </div>
+        <div style={styles.list}>
+          {wsData.moodboardOrder.map((id) => {
+            const mb = wsData.moodboards[id];
+            if (!mb) return null;
+            const isActive = wsData.active.type === "moodboard" && wsData.active.id === id;
+            return (
+              <div key={id} style={{ ...styles.listItem, ...(isActive ? styles.listItemActiveRose : {}) }} onClick={() => onSelectMoodboard(id)}>
+                <span style={styles.listItemText}>{mb.title || "Tanpa judul"}</span>
+                <button
+                  style={styles.listItemDelete}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestConfirm(`Hapus moodboard "${mb.title}"?`, () => onDeleteMoodboard(id));
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            );
+          })}
+          {wsData.moodboardOrder.length === 0 && <div style={styles.listEmpty}>Belum ada moodboard</div>}
+        </div>
+      </div>
+
+      <div style={styles.tabGroup}>
+        <div style={{ ...styles.tab, ...styles.tabViolet }}>
+          <span>Mind Map</span>
+          <button style={styles.tabAdd} onClick={onAddMindmap} title="Tambah mind map">
+            <Plus size={13} />
+          </button>
+        </div>
+        <div style={styles.list}>
+          {wsData.mindmapOrder.map((id) => {
+            const mm = wsData.mindmaps[id];
+            if (!mm) return null;
+            const isActive = wsData.active.type === "mindmap" && wsData.active.id === id;
+            return (
+              <div key={id} style={{ ...styles.listItem, ...(isActive ? styles.listItemActiveViolet : {}) }} onClick={() => onSelectMindmap(id)}>
+                <span style={styles.listItemText}>{mm.title || "Tanpa judul"}</span>
+                <button
+                  style={styles.listItemDelete}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestConfirm(`Hapus mind map "${mm.title}"?`, () => onDeleteMindmap(id));
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            );
+          })}
+          {wsData.mindmapOrder.length === 0 && <div style={styles.listEmpty}>Belum ada mind map</div>}
         </div>
       </div>
     </aside>
@@ -2866,6 +3177,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           return (
             <div
               key={dateStr}
+              className="rw-calendar-day"
               style={{ ...styles.calendarDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(isSelected ? styles.calendarDayCellSelected : {}) }}
               onClick={() => setSelectedDate(dateStr)}
             >
@@ -2981,6 +3293,238 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 }
 
 
+
+// ================= Moodboard & Mind Map =================
+
+// Shared drag-to-reposition hook for freeform canvases (moodboard cards,
+// mind-map nodes). Uses Pointer Events + setPointerCapture so the same code
+// works for mouse, touch, and pen without any window-level listeners.
+function useDragPosition(x, y, onCommit) {
+  const [pos, setPos] = useState({ x, y });
+  const dragging = useRef(false);
+  const start = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+
+  useEffect(() => {
+    if (!dragging.current) setPos({ x, y });
+  }, [x, y]);
+
+  const onPointerDown = (e) => {
+    if (e.target.closest && e.target.closest("[data-no-drag]")) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragging.current = true;
+    start.current = { x: e.clientX, y: e.clientY, ox: pos.x, oy: pos.y };
+  };
+  const onPointerMove = (e) => {
+    if (!dragging.current) return;
+    const dx = e.clientX - start.current.x;
+    const dy = e.clientY - start.current.y;
+    setPos({ x: start.current.ox + dx, y: start.current.oy + dy });
+  };
+  const endDrag = (finalPos) => {
+    dragging.current = false;
+    onCommit(finalPos);
+  };
+  const onPointerUp = (e) => {
+    if (!dragging.current) return;
+    setPos((p) => {
+      endDrag(p);
+      return p;
+    });
+  };
+
+  return { pos, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp } };
+}
+
+function MoodboardView({ board, onUpdateTitle, onAddItem, onUpdateItem, onDeleteItem, onBringFront }) {
+  const items = board.items || {};
+  const itemOrder = board.itemOrder || [];
+  return (
+    <div style={styles.moodWrap}>
+      <input style={styles.noteTitle} value={board.title} onChange={(e) => onUpdateTitle(e.target.value)} placeholder="Judul moodboard" />
+      <div style={styles.moodToolbar}>
+        <button style={styles.moodAddBtn} onClick={onAddItem}>
+          <Plus size={14} />
+          Tambah Kartu
+        </button>
+        <span style={styles.moodHint}>Seret kartu untuk mengatur posisi · ketuk warna untuk mengganti</span>
+      </div>
+      <div style={styles.moodCanvas}>
+        {itemOrder.map((iid, idx) => {
+          const item = items[iid];
+          if (!item) return null;
+          return (
+            <MoodItem
+              key={iid}
+              item={item}
+              z={idx}
+              onUpdate={(patch) => onUpdateItem(iid, patch)}
+              onDelete={() => onDeleteItem(iid)}
+              onFront={() => onBringFront(iid)}
+            />
+          );
+        })}
+        {itemOrder.length === 0 && <div style={styles.moodEmpty}>Belum ada kartu. Ketuk &quot;Tambah Kartu&quot; untuk mulai menyusun moodboard.</div>}
+      </div>
+    </div>
+  );
+}
+
+function MoodItem({ item, z, onUpdate, onDelete, onFront }) {
+  const { pos, handlers } = useDragPosition(item.x, item.y, (p) => onUpdate({ x: p.x, y: p.y }));
+  return (
+    <div
+      className="rw-mood-item"
+      style={{ ...styles.moodItem, left: pos.x, top: pos.y, background: item.color || MOOD_COLORS[0], zIndex: 10 + z }}
+      onPointerDown={(e) => {
+        onFront();
+        handlers.onPointerDown(e);
+      }}
+      onPointerMove={handlers.onPointerMove}
+      onPointerUp={handlers.onPointerUp}
+      onPointerCancel={handlers.onPointerCancel}
+    >
+      <div style={styles.moodItemTop} data-no-drag>
+        <div style={styles.moodColorRow}>
+          {MOOD_COLORS.map((c) => (
+            <button
+              key={c}
+              data-no-drag
+              style={{ ...styles.moodColorDot, background: c, ...((item.color || MOOD_COLORS[0]) === c ? styles.moodColorDotActive : {}) }}
+              onClick={() => onUpdate({ color: c })}
+              aria-label="Pilih warna"
+            />
+          ))}
+        </div>
+        <button data-no-drag style={styles.moodItemDelete} onClick={onDelete} title="Hapus kartu" aria-label="Hapus kartu">
+          <X size={12} />
+        </button>
+      </div>
+      <textarea
+        data-no-drag
+        style={styles.moodItemText}
+        value={item.text}
+        placeholder="Tulis catatan atau tempel ide…"
+        onChange={(e) => onUpdate({ text: e.target.value })}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+function MindMapView({ map, onUpdateTitle, onAddNode, onUpdateNode, onDeleteNode }) {
+  const nodes = map.nodes || {};
+  const [selectedId, setSelectedId] = useState(map.rootId);
+  const nodeList = Object.values(nodes);
+  const selected = nodes[selectedId] ? selectedId : map.rootId;
+
+  const edges = nodeList
+    .filter((n) => n.parentId && nodes[n.parentId])
+    .map((n) => ({ id: n.id, from: nodes[n.parentId], to: n }));
+
+  const minX = Math.min(0, ...nodeList.map((n) => n.x - 140)) - 40;
+  const minY = Math.min(0, ...nodeList.map((n) => n.y - 60)) - 40;
+  const maxX = Math.max(1200, ...nodeList.map((n) => n.x + 140)) + 40;
+  const maxY = Math.max(800, ...nodeList.map((n) => n.y + 60)) + 40;
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  return (
+    <div style={styles.moodWrap}>
+      <input style={styles.noteTitle} value={map.title} onChange={(e) => onUpdateTitle(e.target.value)} placeholder="Judul mind map" />
+      <div style={styles.moodToolbar}>
+        <button style={styles.moodAddBtn} onClick={() => onAddNode(selected)}>
+          <Plus size={14} />
+          Tambah Cabang
+        </button>
+        <span style={styles.moodHint}>Ketuk node untuk memilih, lalu tambah cabang · seret untuk mengatur posisi</span>
+      </div>
+      <div style={styles.mindCanvas}>
+        <div style={{ position: "relative", width, height }}>
+          <svg width={width} height={height} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
+            {edges.map((e) => (
+              <line
+                key={e.id}
+                x1={e.from.x - minX}
+                y1={e.from.y - minY}
+                x2={e.to.x - minX}
+                y2={e.to.y - minY}
+                stroke={e.to.color || MINDMAP_PALETTE[0]}
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                opacity={0.55}
+              />
+            ))}
+          </svg>
+          {nodeList.map((n) => (
+            <MindNode
+              key={n.id}
+              node={n}
+              minX={minX}
+              minY={minY}
+              isRoot={n.id === map.rootId}
+              isSelected={selected === n.id}
+              onSelect={() => setSelectedId(n.id)}
+              onUpdate={(patch) => onUpdateNode(n.id, patch)}
+              onDelete={() => onDeleteNode(n.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MindNode({ node, minX, minY, isRoot, isSelected, onSelect, onUpdate, onDelete }) {
+  const { pos, handlers } = useDragPosition(node.x, node.y, (p) => onUpdate({ x: p.x, y: p.y }));
+  return (
+    <div
+      className="rw-mind-node"
+      style={{
+        ...styles.mindNode,
+        left: pos.x - minX,
+        top: pos.y - minY,
+        borderColor: node.color || MINDMAP_PALETTE[0],
+        ...(isRoot ? styles.mindNodeRoot : {}),
+        ...(isSelected ? { boxShadow: `0 0 0 2px ${node.color || MINDMAP_PALETTE[0]}` } : {}),
+      }}
+      onPointerDown={(e) => {
+        onSelect();
+        handlers.onPointerDown(e);
+      }}
+      onPointerMove={handlers.onPointerMove}
+      onPointerUp={handlers.onPointerUp}
+      onPointerCancel={handlers.onPointerCancel}
+    >
+      <input
+        data-no-drag
+        style={{ ...styles.mindNodeInput, color: isRoot ? "#fff" : "var(--text-primary)" }}
+        value={node.text}
+        onChange={(e) => onUpdate({ text: e.target.value })}
+        onPointerDown={(e) => e.stopPropagation()}
+        onFocus={onSelect}
+      />
+      {!isRoot && (
+        <button data-no-drag style={styles.mindNodeDelete} onClick={onDelete} title="Hapus cabang" aria-label="Hapus cabang">
+          <X size={11} />
+        </button>
+      )}
+      {!isRoot && (
+        <div style={styles.mindColorRow} data-no-drag>
+          {MINDMAP_PALETTE.map((c) => (
+            <button
+              key={c}
+              data-no-drag
+              style={{ ...styles.mindColorDot, background: c, ...((node.color || MINDMAP_PALETTE[0]) === c ? styles.mindColorDotActive : {}) }}
+              onClick={() => onUpdate({ color: c })}
+              aria-label="Pilih warna cabang"
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const styles = {
   app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "var(--app-bg)", color: "var(--text-primary)", position: "relative" },
   topbar: { position: "fixed", top: 0, left: 0, right: 0, height: 56, background: "#111111", color: "#fff", alignItems: "center", gap: 12, padding: "0 14px", zIndex: 10 },
@@ -3035,11 +3579,15 @@ const styles = {
   tab: { display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", padding: "6px 10px", borderRadius: "6px 6px 0 0", fontWeight: 500 },
   tabGold: { background: "rgba(59,130,246,0.18)", color: "#60A5FA" },
   tabMoss: { background: "rgba(16,185,129,0.22)", color: "#34D399" },
+  tabRose: { background: "rgba(236,72,153,0.18)", color: "#F472B6" },
+  tabViolet: { background: "rgba(139,92,246,0.18)", color: "#A78BFA" },
   tabAdd: { background: "transparent", border: "1px solid currentColor", color: "inherit", borderRadius: 4, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
   list: { display: "flex", flexDirection: "column", gap: 2 },
   listItem: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 5, fontSize: 13.5, cursor: "pointer", color: "#C9C7BF" },
   listItemActiveGold: { background: "rgba(59,130,246,0.28)", color: "#fff", boxShadow: "inset 3px 0 0 #60A5FA" },
   listItemActiveMoss: { background: "rgba(16,185,129,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #34D399" },
+  listItemActiveRose: { background: "rgba(236,72,153,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #F472B6" },
+  listItemActiveViolet: { background: "rgba(139,92,246,0.32)", color: "#fff", boxShadow: "inset 3px 0 0 #A78BFA" },
   listItemText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 },
   listItemDelete: { background: "transparent", border: "none", color: "inherit", opacity: 0.7, cursor: "pointer", padding: "0 2px", flexShrink: 0, display: "flex", alignItems: "center" },
   listEmpty: { fontSize: 12, color: "var(--text-muted)", padding: "6px 10px", fontStyle: "italic" },
@@ -3218,6 +3766,9 @@ const styles = {
     cursor: "pointer",
     fontSize: 13,
     color: "var(--text-primary)",
+    WebkitTapHighlightColor: "transparent",
+    userSelect: "none",
+    outline: "none",
   },
   calendarDayCellToday: { borderColor: "#10B981", boxShadow: "0 0 0 1px #10B981 inset" },
   calendarDayCellSelected: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
@@ -3230,4 +3781,108 @@ const styles = {
   calendarNoteMeta: { fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0, whiteSpace: "nowrap" },
   calendarAddRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
   calendarAddSelectRow: { display: "flex", gap: 6, flexWrap: "wrap" },
+
+  moodWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 1100 },
+  moodToolbar: { display: "flex", alignItems: "center", gap: 12, margin: "4px 0 16px", flexWrap: "wrap" },
+  moodAddBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#EC4899",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "8px 14px",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  moodHint: { fontSize: 12, color: "var(--text-faint)" },
+  moodCanvas: {
+    position: "relative",
+    minHeight: 560,
+    width: "100%",
+    border: "1px dashed var(--card-border)",
+    borderRadius: 12,
+    overflow: "auto",
+    background: "var(--surface-solid)",
+    backgroundImage: "radial-gradient(var(--card-border) 1px, transparent 1px)",
+    backgroundSize: "18px 18px",
+  },
+  moodEmpty: { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", color: "var(--text-faint)", fontSize: 13, textAlign: "center", width: 260 },
+  moodItem: {
+    position: "absolute",
+    width: 190,
+    borderRadius: 10,
+    padding: 10,
+    boxShadow: "0 6px 16px rgba(0,0,0,0.15)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    cursor: "grab",
+    touchAction: "none",
+    WebkitTapHighlightColor: "transparent",
+  },
+  moodItemTop: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 },
+  moodColorRow: { display: "flex", gap: 4, flexWrap: "wrap" },
+  moodColorDot: { width: 13, height: 13, borderRadius: "50%", border: "1px solid rgba(0,0,0,0.15)", cursor: "pointer", padding: 0 },
+  moodColorDotActive: { boxShadow: "0 0 0 2px rgba(0,0,0,0.35)" },
+  moodItemDelete: { background: "transparent", border: "none", color: "rgba(0,0,0,0.45)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  moodItemText: {
+    width: "100%",
+    minHeight: 90,
+    resize: "vertical",
+    border: "none",
+    background: "transparent",
+    outline: "none",
+    fontSize: 13,
+    lineHeight: 1.5,
+    color: "#1F2937",
+    fontFamily: "'Inter', system-ui, sans-serif",
+    boxSizing: "border-box",
+  },
+
+  mindCanvas: {
+    position: "relative",
+    minHeight: 560,
+    width: "100%",
+    border: "1px dashed var(--card-border)",
+    borderRadius: 12,
+    overflow: "auto",
+    background: "var(--surface-solid)",
+    backgroundImage: "radial-gradient(var(--card-border) 1px, transparent 1px)",
+    backgroundSize: "18px 18px",
+  },
+  mindNode: {
+    position: "absolute",
+    minWidth: 130,
+    maxWidth: 190,
+    transform: "translate(-50%, -50%)",
+    background: "var(--surface-strong)",
+    border: "2px solid",
+    borderRadius: 10,
+    padding: "8px 10px",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    cursor: "grab",
+    touchAction: "none",
+    WebkitTapHighlightColor: "transparent",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+  },
+  mindNodeRoot: { background: "#3B82F6", borderColor: "#3B82F6", fontWeight: 700 },
+  mindNodeInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    fontSize: 13,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    fontWeight: 600,
+  },
+  mindNodeDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  mindColorRow: { position: "absolute", bottom: -16, left: 6, display: "flex", gap: 3 },
+  mindColorDot: { width: 10, height: 10, borderRadius: "50%", border: "1px solid var(--card-border)", cursor: "pointer", padding: 0 },
+  mindColorDotActive: { boxShadow: "0 0 0 2px rgba(0,0,0,0.35)" },
 };
