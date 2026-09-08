@@ -3611,6 +3611,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                           title={notes.length ? `${notes.length} kartu` : "Tambah kartu"}
                         >
                           {d}
+                          {notes.length > 0 && <span style={styles.annualDayBadge}>{notes.length}</span>}
                         </div>
                       );
                     })}
@@ -3620,29 +3621,37 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             </div>
 
             <div style={styles.annualSummaryPanel}>
-              <div style={styles.involvedLabel}>Daftar Kegiatan {annualYear}</div>
+              <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN</div>
               {annualSummaryList.length === 0 ? (
-                <div style={styles.insightEmpty}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
+                <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
               ) : (
-                <div style={styles.annualSummaryList}>
-                  {annualSummaryList.map((item) => (
-                    <div
-                      key={item.key}
-                      style={{ ...styles.annualSummaryItem, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
-                      onClick={() => {
-                        setSelectedDate(item.dateStr);
-                        setDialogOpen(true);
-                      }}
-                    >
-                      <span style={styles.annualSummaryDate}>
-                        {item.day} {item.month} {item.year}
-                      </span>
-                      <span style={styles.annualSummaryName}>{item.name}</span>
-                    </div>
-                  ))}
+                <div style={styles.annualSummaryTable}>
+                  <div style={styles.annualSummaryHeadRow}>
+                    <span style={styles.annualSummaryColNo}>No.</span>
+                    <span style={styles.annualSummaryColDate}>Tanggal</span>
+                    <span style={styles.annualSummaryColName}>Uraian Kegiatan</span>
+                  </div>
+                  <div style={styles.annualSummaryList}>
+                    {annualSummaryList.map((item, idx) => (
+                      <div
+                        key={item.key}
+                        style={{ ...styles.annualSummaryRow, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
+                        onClick={() => {
+                          setSelectedDate(item.dateStr);
+                          setDialogOpen(true);
+                        }}
+                      >
+                        <span style={styles.annualSummaryColNo}>{idx + 1}</span>
+                        <span style={styles.annualSummaryColDate}>
+                          {item.day} {item.month} {item.year}
+                        </span>
+                        <span style={styles.annualSummaryColName}>{item.name}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-              <div style={styles.insightSubtitleSmall}>Rincian lengkap (jenis, tim, durasi, RAB) tersedia di file spreadsheet hasil ekspor.</div>
+              <div style={{ ...styles.insightSubtitleSmall, padding: "6px 14px 12px" }}>Rincian lengkap (jenis, tim, durasi, RAB) tersedia di file spreadsheet hasil ekspor.</div>
             </div>
           </div>
 
@@ -4260,17 +4269,22 @@ const styles = {
 
   annualGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, flex: "2 1 600px" },
   annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 1400 },
-  annualSummaryPanel: { flex: "1 1 260px", minWidth: 240, maxWidth: 340, display: "flex", flexDirection: "column", gap: 8, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 14px", position: "sticky", top: 0 },
-  annualSummaryList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 480, overflowY: "auto" },
-  annualSummaryItem: { display: "flex", flexDirection: "column", gap: 1, padding: "6px 8px", borderRadius: 6, cursor: "pointer" },
+  annualSummaryPanel: { flex: "1 1 260px", minWidth: 260, maxWidth: 360, display: "flex", flexDirection: "column", gap: 0, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, overflow: "hidden", position: "sticky", top: 0 },
+  annualSummaryHeader: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.4, textTransform: "uppercase", color: "#fff", background: "#8a7a52", padding: "10px 14px" },
+  annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px" },
+  annualSummaryHeadRow: { display: "flex", gap: 8, padding: "8px 4px 6px", borderBottom: "2px solid var(--card-border)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-faint)" },
+  annualSummaryList: { display: "flex", flexDirection: "column", maxHeight: 460, overflowY: "auto" },
+  annualSummaryRow: { display: "flex", gap: 8, padding: "6px 4px", borderBottom: "1px solid var(--card-border)", cursor: "pointer", alignItems: "baseline" },
   annualSummaryItemActive: { background: "rgba(59,130,246,0.15)" },
-  annualSummaryDate: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: "var(--text-faint)" },
-  annualSummaryName: { fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 },
+  annualSummaryColNo: { flex: "0 0 22px", fontSize: 11, color: "var(--text-faint)" },
+  annualSummaryColDate: { flex: "0 0 92px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-muted)" },
+  annualSummaryColName: { flex: "1 1 auto", fontSize: 12, color: "var(--text-primary)", fontWeight: 600, lineHeight: 1.3 },
   annualMonthCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: 10 },
   annualMonthTitle: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 600, fontSize: 13, color: "var(--text-primary)", marginBottom: 6, textAlign: "center" },
   annualMiniGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
   annualWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, color: "var(--text-faint)", padding: "2px 0" },
   annualDayCell: {
+    position: "relative",
     aspectRatio: "1 / 1",
     display: "flex",
     alignItems: "center",
@@ -4282,6 +4296,8 @@ const styles = {
     border: "1px solid transparent",
   },
   annualDayCellHasNotes: { background: "rgba(59,130,246,0.18)", color: "var(--text-primary)", fontWeight: 700, border: "1px solid rgba(59,130,246,0.4)" },
+  annualDayBadge: { position: "absolute", top: -3, right: -3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 7.5, fontWeight: 700, color: "#fff", background: "#EF4444", borderRadius: 6, minWidth: 11, height: 11, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 2px", lineHeight: 1 },
+
 
   calendarDialogHeadRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
 
