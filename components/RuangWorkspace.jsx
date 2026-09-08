@@ -25,6 +25,39 @@ import {
   Palette,
   GitBranch,
 } from "lucide-react";
+import {
+  PERSONAL_INDEX_KEY,
+  SHARED_INDEX_KEY,
+  dataKey,
+  DEFAULT_CARD_TYPES,
+  MOOD_COLORS,
+  MINDMAP_PALETTE,
+  UNIT_MS,
+  UNIT_LABEL,
+  DUE_SOON_MS,
+  MONTH_NAMES_ID,
+  COLUMN_DOT_COLORS,
+  columnDotColor,
+  uid,
+} from "../lib/constants";
+import {
+  formatCreatedDate,
+  toDateInputValue,
+  dateInputToTimestamp,
+  resolveManualCreatedAt,
+  startDateHint,
+  monthKeyOf,
+  currentMonthKey,
+  monthKeyFromTimestamp,
+  parseMonthKey,
+  monthKeyLabel,
+  shiftMonthKey,
+  defaultColumnsTemplate,
+  getMonthBoard,
+  formatHoursMinutes,
+  getDurationInfo,
+  collectUrgentCards,
+} from "../lib/dateUtils";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -60,128 +93,6 @@ if (typeof window !== "undefined" && !window.__ruangStorageInstalled) {
       return { keys: data.keys || [], prefix, shared: !!shared };
     },
   };
-}
-
-const PERSONAL_INDEX_KEY = "ruang-personal-index";
-const SHARED_INDEX_KEY = "ruang-shared-index";
-const dataKey = (id) => `ruang-data-${id}`;
-const DEFAULT_CARD_TYPES = [
-  "Video Semenit",
-  "Kalam Ulama",
-  "Poster Dakwah",
-  "Video Dokumentasi/Konten",
-  "Poster Kajian/TA",
-  "Desain Cetak",
-  "Desain Poster Divisi",
-];
-
-const MOOD_COLORS = ["#FEF3C7", "#DBEAFE", "#DCFCE7", "#FCE7F3", "#EDE9FE", "#FFE4E6", "#E0F2FE", "#FFEDD5"];
-const MINDMAP_PALETTE = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
-
-function formatCreatedDate(ts) {
-  try {
-    return new Date(ts).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  } catch (e) {
-    return "";
-  }
-}
-
-// Converts a timestamp to the "YYYY-MM-DD" shape a <input type="date"> needs,
-// using local calendar fields (not UTC) so the picker shows the day the
-// person actually chose.
-function toDateInputValue(ts) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-// A manually-picked date (past or future) always starts its countdown at
-// 08:00 local time on that day, so the duration/overdue math has a
-// consistent, predictable anchor regardless of what time it is right now.
-function dateInputToTimestamp(dateStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 8, 0, 0, 0).getTime();
-}
-
-// Picking "today" means "start counting from right now" (the actual
-// creation/edit moment), not from a fixed 08:00 — the 08:00 anchor is only
-// for a date that's genuinely different from today (past or future).
-function resolveManualCreatedAt(dateStr) {
-  if (!dateStr) return undefined;
-  const todayStr = toDateInputValue(Date.now());
-  return dateStr === todayStr ? Date.now() : dateInputToTimestamp(dateStr);
-}
-
-// The "mulai 08:00 di tanggal ini" hint should only show for a date that's
-// tomorrow or later — not for today (which just uses the current time), and
-// not for a past date either.
-function startDateHint(dateStr) {
-  if (!dateStr) return "kosongkan = hari ini";
-  const todayStr = toDateInputValue(Date.now());
-  if (dateStr === todayStr) return "mulai dari waktu sekarang";
-  if (dateStr > todayStr) return "mulai 08:00 di tanggal ini";
-  return "tanggal lampau · dihitung mulai 08:00";
-}
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-
-const UNIT_MS = { menit: 60000, jam: 3600000, hari: 86400000 };
-const UNIT_LABEL = { menit: "menit", jam: "jam", hari: "hari" };
-const DUE_SOON_MS = 12 * UNIT_MS.jam;
-
-// ---- Month helpers (papan bulanan) ----
-// Each board now keeps a separate set of columns/cards per calendar month
-// ("monthly"), so switching months shows a genuinely different board while
-// past months stay exactly as they were left.
-const MONTH_NAMES_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-
-// Warna titik status kolom, gaya ClickUp — dipilih berdasar posisi kolom
-// (bukan nama), jadi tetap konsisten meski kolom di-rename atau ditambah.
-const COLUMN_DOT_COLORS = ["#9CA3AF", "#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4"];
-function columnDotColor(index) {
-  return COLUMN_DOT_COLORS[index % COLUMN_DOT_COLORS.length];
-}
-
-function monthKeyOf(year, monthIndex0) {
-  return `${year}-${String(monthIndex0 + 1).padStart(2, "0")}`;
-}
-function currentMonthKey() {
-  const d = new Date();
-  return monthKeyOf(d.getFullYear(), d.getMonth());
-}
-function monthKeyFromTimestamp(ts) {
-  const d = new Date(ts);
-  return monthKeyOf(d.getFullYear(), d.getMonth());
-}
-function parseMonthKey(key) {
-  const [y, m] = key.split("-").map(Number);
-  return { year: y, monthIndex0: m - 1 };
-}
-function monthKeyLabel(key) {
-  const { year, monthIndex0 } = parseMonthKey(key);
-  return `${MONTH_NAMES_ID[monthIndex0]} ${year}`;
-}
-function shiftMonthKey(key, delta) {
-  const { year, monthIndex0 } = parseMonthKey(key);
-  const d = new Date(year, monthIndex0 + delta, 1);
-  return monthKeyOf(d.getFullYear(), d.getMonth());
-}
-function defaultColumnsTemplate(seed) {
-  const s = seed || uid();
-  return [
-    { id: `${s}-c0`, name: "Belum Dikerjakan", cardIds: [] },
-    { id: `${s}-c1`, name: "Sedang Dikerjakan", cardIds: [] },
-    { id: `${s}-c2`, name: "Selesai", cardIds: [] },
-  ];
-}
-// Returns the month's board (columns+cards), or a fresh (not yet persisted)
-// one seeded deterministically from the month key — so every caller asking
-// about the same never-visited month sees the exact same column ids, instead
-// of a fresh random set each time (which would break renaming/moving/adding
-// before that month has been "touched" for the first time).
-function getMonthBoard(board, monthKey) {
-  if (board.monthly && board.monthly[monthKey]) return board.monthly[monthKey];
-  return { columns: defaultColumnsTemplate(monthKey), cards: {} };
 }
 
 const emptyWorkspaceData = () => ({
@@ -306,68 +217,23 @@ function normalizeWsData(raw) {
   return { ...base, cardTypes, calendarNotes, boards, moodboards, moodboardOrder, mindmaps, mindmapOrder };
 }
 
-function useDebouncedSave(key, value, shared, ready) {
+function useDebouncedSave(key, value, shared, ready, onStatusChange) {
   const timer = useRef(null);
   useEffect(() => {
     if (!ready || !key) return;
     if (timer.current) clearTimeout(timer.current);
+    if (onStatusChange) onStatusChange("saving");
     timer.current = setTimeout(async () => {
       try {
         await window.storage.set(key, JSON.stringify(value), shared);
+        if (onStatusChange) onStatusChange("saved");
       } catch (e) {
         console.error("Gagal menyimpan:", e);
+        if (onStatusChange) onStatusChange("error");
       }
     }, 400);
     return () => clearTimeout(timer.current);
   }, [key, value, shared, ready]);
-}
-
-function formatHoursMinutes(ms) {
-  const totalMinutes = Math.max(0, Math.round(ms / 60000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes} menit`;
-  if (minutes === 0) return `${hours} jam`;
-  return `${hours} jam ${minutes} menit`;
-}
-
-function getDurationInfo(card) {
-  if (!card.duration) return null;
-  if (!card.startedAt) return null; // masih di "Belum Dikerjakan" — timer belum aktif
-  const { amount, unit } = card.duration;
-  const due = card.startedAt + amount * UNIT_MS[unit];
-  const remaining = due - Date.now();
-  const label = `${amount} ${UNIT_LABEL[unit]}`;
-  if (remaining <= 0) {
-    return { text: `Terlambat ${formatHoursMinutes(Math.abs(remaining))} · target ${label}`, status: "overdue" };
-  }
-  const remText = `${formatHoursMinutes(remaining)} lagi`;
-  const status = remaining <= DUE_SOON_MS ? "due_soon" : "ok";
-  return { text: `${remText} · target ${label}`, status };
-}
-
-function collectUrgentCards(wsData) {
-  const overdue = [];
-  const dueSoon = [];
-  const mk = currentMonthKey();
-  wsData.boardOrder.forEach((bid) => {
-    const board = wsData.boards[bid];
-    if (!board) return;
-    const monthBoard = board.monthly && board.monthly[mk];
-    if (!monthBoard) return;
-    monthBoard.columns.forEach((col) => {
-      col.cardIds.forEach((cid) => {
-        const card = monthBoard.cards[cid];
-        if (!card || !card.duration) return;
-        const info = getDurationInfo(card);
-        if (!info) return;
-        const item = { boardId: board.id, boardName: board.name, columnName: col.name, cardText: card.text, text: info.text };
-        if (info.status === "overdue") overdue.push(item);
-        else if (info.status === "due_soon") dueSoon.push(item);
-      });
-    });
-  });
-  return { overdue, dueSoon };
 }
 
 function sanitizeSheetName(name) {
@@ -466,6 +332,7 @@ const RESPONSIVE_CSS = `
 .rw-glass { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .rw-sidebar { position: relative; transform: none; z-index: 30; }
 .rw-topbar { display: none; }
+.rw-save-status-desktop { display: flex; }
 .rw-backdrop { display: none; }
 .rw-board-title { font-size: 26px; }
 .rw-column { width: 270px; min-width: 270px; }
@@ -521,6 +388,7 @@ const RESPONSIVE_CSS = `
   .rw-sidebar.collapsed { width: 82% !important; min-width: 0 !important; max-width: 300px !important; }
   .rw-collapse-btn { display: none !important; }
   .rw-topbar { display: flex; }
+  .rw-save-status-desktop { display: none !important; }
   .rw-main { padding: 16px !important; padding-top: 68px !important; }
   .rw-backdrop.open { display: block; position: fixed; inset: 0; background: rgba(20,20,20,0.45); z-index: 25; }
   .rw-columns-row { scroll-snap-type: x mandatory; }
@@ -591,6 +459,7 @@ export default function RuangWorkspace() {
   const [showIosInstallHint, setShowIosInstallHint] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [isDesktopViewport, setIsDesktopViewport] = useState(true);
+  const [saveStatus, setSaveStatus] = useState("saved"); // "saved" | "saving" | "error"
 
   const requestConfirm = (message, onConfirm, options) =>
     setConfirmDialog({ message, onConfirm, confirmLabel: options?.confirmLabel, onCancel: options?.onCancel });
@@ -783,7 +652,7 @@ export default function RuangWorkspace() {
   }, [activeWsId, workspaces]);
 
   const activeWs = workspaces ? workspaces.find((w) => w.id === activeWsId) : null;
-  useDebouncedSave(activeWs ? dataKey(activeWs.id) : null, wsData, activeWs?.mode === "team", ready && !!wsData);
+  useDebouncedSave(activeWs ? dataKey(activeWs.id) : null, wsData, activeWs?.mode === "team", ready && !!wsData, setSaveStatus);
 
   // ---- Auth actions ----
   const handleCreateFirstAdmin = async () => {
@@ -959,15 +828,16 @@ export default function RuangWorkspace() {
     const entry = mode === "team" ? { id, name, mode, allowedMembers } : { id, name, mode };
     const empty = emptyWorkspaceData();
     try {
-      await window.storage.set(dataKey(id), JSON.stringify(empty), mode === "team");
       if (mode === "team") {
         const res = await window.storage.get(SHARED_INDEX_KEY, true).catch(() => null);
         const current = res && res.value ? JSON.parse(res.value) : [];
         await window.storage.set(SHARED_INDEX_KEY, JSON.stringify([...current, entry]), true);
+        await window.storage.set(dataKey(id), JSON.stringify(empty), true);
       } else {
         const res = await window.storage.get(PERSONAL_INDEX_KEY, false).catch(() => null);
         const current = res && res.value ? JSON.parse(res.value) : [];
         await window.storage.set(PERSONAL_INDEX_KEY, JSON.stringify([...current, entry]), false);
+        await window.storage.set(dataKey(id), JSON.stringify(empty), false);
       }
     } catch (e) {
       console.error("Gagal membuat ruang:", e);
@@ -1530,6 +1400,17 @@ export default function RuangWorkspace() {
           ☰
         </button>
         <span style={styles.topbarTitle}>{currentTitle}</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+          {saveStatus === "saving" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusSaving }}>● Menyimpan...</span>
+          )}
+          {saveStatus === "saved" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusSaved }}>✓ Tersimpan</span>
+          )}
+          {saveStatus === "error" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusError }}>⚠ Gagal simpan</span>
+          )}
+        </div>
       </div>
       <div className={`rw-backdrop ${sidebarOpen ? "open" : ""}`} onClick={closeSidebar} />
 
@@ -1623,6 +1504,17 @@ export default function RuangWorkspace() {
         onDeleteMindmap={deleteMindmap}
       />
       <main className="rw-main" style={styles.main}>
+        <div className="rw-save-status-desktop" style={styles.saveStatusDesktopWrap}>
+          {saveStatus === "saving" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusSaving }}>● Menyimpan...</span>
+          )}
+          {saveStatus === "saved" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusSaved }}>✓ Tersimpan</span>
+          )}
+          {saveStatus === "error" && (
+            <span style={{ ...styles.saveStatusBadge, ...styles.saveStatusError }}>⚠ Gagal menyimpan</span>
+          )}
+        </div>
         {activeWs?.mode === "team" && (
           <div style={styles.teamBanner}>Ruang tim — hanya anggota yang disetujui admin yang bisa membuka dan mengedit ruang ini.</div>
         )}
@@ -3742,6 +3634,39 @@ function MindNode({ node, minX, minY, isRoot, isSelected, onSelect, onUpdate, on
 
 const styles = {
   app: { display: "flex", height: "100vh", minHeight: 640, fontFamily: "'Inter', system-ui, sans-serif", background: "var(--app-bg)", color: "var(--text-primary)", position: "relative" },
+  saveStatusDesktopWrap: {
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    padding: "8px 24px 0 24px",
+    marginBottom: -8,
+  },
+  saveStatusBadge: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    padding: "3px 9px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    fontWeight: 500,
+    transition: "all 0.2s ease",
+  },
+  saveStatusSaved: {
+    color: "#10B981",
+    background: "rgba(16, 185, 129, 0.1)",
+    border: "1px solid rgba(16, 185, 129, 0.25)",
+  },
+  saveStatusSaving: {
+    color: "#F59E0B",
+    background: "rgba(245, 158, 11, 0.1)",
+    border: "1px solid rgba(245, 158, 11, 0.25)",
+  },
+  saveStatusError: {
+    color: "#EF4444",
+    background: "rgba(239, 68, 68, 0.1)",
+    border: "1px solid rgba(239, 68, 68, 0.25)",
+  },
   topbar: { position: "fixed", top: 0, left: 0, right: 0, height: 56, background: "#111111", color: "#fff", alignItems: "center", gap: 12, padding: "0 14px", zIndex: 10 },
   hamburgerBtn: { background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", padding: 4 },
   topbarTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
