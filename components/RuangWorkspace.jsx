@@ -24,6 +24,7 @@ import {
   FileText,
   Palette,
   GitBranch,
+  Star,
 } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
@@ -1179,24 +1180,44 @@ export default function RuangWorkspace() {
   };
 
   const deleteColumn = (boardId, monthKey, colId) => {
-    patchMonthBoard(boardId, monthKey, (mb) => {
-      const col = mb.columns.find((c) => c.id === colId);
-      const cards = { ...mb.cards };
-      if (col) col.cardIds.forEach((cid) => delete cards[cid]);
-      return { ...mb, columns: mb.columns.filter((c) => c.id !== colId), cards };
+    setWsData((d) => {
+      const board = d.boards[boardId];
+      if (!board) return d;
+      const monthBoard = getMonthBoard(board, monthKey);
+      const col = monthBoard.columns.find((c) => c.id === colId);
+      const removedIds = col ? col.cardIds : [];
+      const cards = { ...monthBoard.cards };
+      removedIds.forEach((cid) => delete cards[cid]);
+      const updatedMonthBoard = { ...monthBoard, columns: monthBoard.columns.filter((c) => c.id !== colId), cards };
+      const boards = { ...d.boards, [boardId]: { ...board, monthly: { ...(board.monthly || {}), [monthKey]: updatedMonthBoard } } };
+
+      let calendarNotes = d.calendarNotes;
+      if (removedIds.length) {
+        Object.keys(calendarNotes || {}).forEach((dateStr) => {
+          const list = calendarNotes[dateStr];
+          const filtered = list.filter((n) => !(n.boardId === boardId && n.monthKey === monthKey && removedIds.includes(n.cardId)));
+          if (filtered.length !== list.length) {
+            if (calendarNotes === d.calendarNotes) calendarNotes = { ...calendarNotes };
+            if (filtered.length) calendarNotes[dateStr] = filtered;
+            else delete calendarNotes[dateStr];
+          }
+        });
+      }
+
+      return { ...d, boards, calendarNotes };
     });
   };
 
   // Returns the new card's id synchronously (the id is minted before the
   // state update, not inside it) so callers — like the calendar sync — can
   // immediately remember which card they just created.
-  const addCard = (boardId, monthKey, colId, text, duration, involvedMembers, cardType, qty, createdAt, rab) => {
+  const addCard = (boardId, monthKey, colId, text, duration, involvedMembers, cardType, qty, createdAt, rab, fromCalendar) => {
     const finalText = (text && text.trim()) || cardType || "Kartu Baru";
     const finalQty = Number(qty) > 0 ? Number(qty) : 1;
     const finalCreatedAt = Number(createdAt) > 0 ? Number(createdAt) : Date.now();
     const finalRab = Number(rab) > 0 ? Number(rab) : undefined;
     const newId = uid();
-    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false, priority: false, rab: finalRab };
+    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false, priority: false, rab: finalRab, fromCalendar: !!fromCalendar };
     patchMonthBoard(boardId, monthKey, (mb) => {
       // Falls back to the first column if colId doesn't match anything in
       // this month's bucket (e.g. a calendar note aimed at a month that's
@@ -1214,11 +1235,31 @@ export default function RuangWorkspace() {
 
   // Removes the card from whichever column currently holds it, so callers
   // (including calendar notes) don't need to track its column separately.
+  // Also scrubs any calendar-note references to this card in the same update,
+  // so deleting a card on the board doesn't leave a stale notification badge
+  // behind on the calendar.
   const deleteCard = (boardId, monthKey, cardId) => {
-    patchMonthBoard(boardId, monthKey, (mb) => {
-      const cards = { ...mb.cards };
+    setWsData((d) => {
+      const board = d.boards[boardId];
+      if (!board) return d;
+      const monthBoard = getMonthBoard(board, monthKey);
+      const cards = { ...monthBoard.cards };
       delete cards[cardId];
-      return { ...mb, cards, columns: mb.columns.map((c) => ({ ...c, cardIds: c.cardIds.filter((id) => id !== cardId) })) };
+      const updatedMonthBoard = { ...monthBoard, cards, columns: monthBoard.columns.map((c) => ({ ...c, cardIds: c.cardIds.filter((id) => id !== cardId) })) };
+      const boards = { ...d.boards, [boardId]: { ...board, monthly: { ...(board.monthly || {}), [monthKey]: updatedMonthBoard } } };
+
+      let calendarNotes = d.calendarNotes;
+      Object.keys(calendarNotes || {}).forEach((dateStr) => {
+        const list = calendarNotes[dateStr];
+        const filtered = list.filter((n) => !(n.boardId === boardId && n.monthKey === monthKey && n.cardId === cardId));
+        if (filtered.length !== list.length) {
+          if (calendarNotes === d.calendarNotes) calendarNotes = { ...calendarNotes };
+          if (filtered.length) calendarNotes[dateStr] = filtered;
+          else delete calendarNotes[dateStr];
+        }
+      });
+
+      return { ...d, boards, calendarNotes };
     });
   };
 
@@ -1307,7 +1348,7 @@ export default function RuangWorkspace() {
     const targetCol = monthBoard.columns.find((c) => c.id === colId) || monthBoard.columns[0];
     if (!targetCol) return;
     const finalMembers = involvedMembers && involvedMembers.length ? involvedMembers : currentUser ? [currentUser.username] : [];
-    const cardId = addCard(boardId, monthKey, targetCol.id, text, duration || null, finalMembers, cardType || "", qty, dateInputToTimestamp(dateStr), rab);
+    const cardId = addCard(boardId, monthKey, targetCol.id, text, duration || null, finalMembers, cardType || "", qty, dateInputToTimestamp(dateStr), rab, true);
     const noteId = uid();
     setWsData((d) => {
       const list = d.calendarNotes[dateStr] || [];
@@ -2510,7 +2551,7 @@ function CreatedDateEditor({ createdAt, onChange }) {
 // Inline card-title editor: click the pencil to rename an existing card
 // without losing its checked state, duration, or other fields. Enter/blur
 // saves, Escape reverts.
-function CardTitle({ text, checked, priority, checkboxDisabled, onToggleCheck, onSave, onRequestDelete, onTogglePriority, canMoveLeft, canMoveRight, onMoveLeft, onMoveRight }) {
+function CardTitle({ text, checked, priority, fromCalendar, checkboxDisabled, onToggleCheck, onSave, onRequestDelete, onTogglePriority, canMoveLeft, canMoveRight, onMoveLeft, onMoveRight }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
 
@@ -2556,6 +2597,9 @@ function CardTitle({ text, checked, priority, checkboxDisabled, onToggleCheck, o
             <input type="checkbox" checked={!!checked} onChange={onToggleCheck} style={styles.checkbox} />
           )}
           <span style={{ ...styles.cardText, ...(checked ? styles.cardTextDone : {}) }}>{text}</span>
+          {fromCalendar && (
+            <Star size={12} fill="#F5B400" color="#F5B400" style={styles.calendarStarBadge} title="Kartu spesial dari Rencana Tahunan / Kalender" />
+          )}
         </label>
       )}
       <div style={styles.cardTopActions}>
@@ -2728,6 +2772,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                       checked={colIndex === 2 ? true : card.checked}
                       checkboxDisabled={colIndex === 2}
                       priority={card.priority}
+                      fromCalendar={!!card.fromCalendar}
                       onToggleCheck={() => onToggleCheck(board.id, viewMonth, col.id, cid)}
                       onTogglePriority={() => onTogglePriority(board.id, viewMonth, col.id, cid)}
                       onSave={(newText) => onUpdateCard(board.id, viewMonth, cid, { text: newText })}
@@ -4098,6 +4143,7 @@ const styles = {
   checkLabel: { display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer", flex: 1, minWidth: 0 },
   checkbox: { marginTop: 3, cursor: "pointer", flexShrink: 0 },
   cardText: { fontSize: 13.5, lineHeight: 1.4, color: "var(--text-primary)", fontWeight: 700, wordBreak: "break-word" },
+  calendarStarBadge: { flexShrink: 0, marginLeft: 4, verticalAlign: "middle" },
   cardTextDone: { textDecoration: "line-through", color: "var(--text-faint)" },
   cardTitleInput: { flex: 1, fontSize: 13.5, lineHeight: 1.4, fontWeight: 700, fontFamily: "'Inter', system-ui, sans-serif", color: "var(--text-primary)", background: "var(--input-bg)", border: "1px solid #3B82F6", borderRadius: 6, padding: "4px 7px", outline: "none", minWidth: 0, boxSizing: "border-box" },
   cardEditBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
