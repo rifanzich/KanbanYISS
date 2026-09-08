@@ -3,8 +3,6 @@ import { getSessionUser } from "../../../../lib/auth";
 import { countAccounts } from "../../../../lib/kv";
 import { errorMessage } from "../../../../lib/apiError";
 
-export const dynamic = "force-dynamic";
-
 export async function GET(request) {
   try {
     const user = getSessionUser(request);

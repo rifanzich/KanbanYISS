@@ -3,8 +3,6 @@ import { getSessionUser } from "../../../lib/auth";
 import { storageGet, storageSet, storageDelete, canAccessSharedKey } from "../../../lib/kv";
 import { errorMessage } from "../../../lib/apiError";
 
-export const dynamic = "force-dynamic";
-
 export async function GET(request) {
   try {
     const user = getSessionUser(request);
@@ -13,7 +11,7 @@ export async function GET(request) {
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
-    if (shared && !(await canAccessSharedKey(key, user, "read"))) {
+    if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }
     const value = await storageGet(key, shared, user.username);
@@ -33,7 +31,7 @@ export async function POST(request) {
     const body = await request.json().catch(() => ({}));
     const { key, value, shared } = body;
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
-    if (shared && !(await canAccessSharedKey(key, user, "write"))) {
+    if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }
     await storageSet(key, value, !!shared, user.username);
@@ -51,7 +49,7 @@ export async function DELETE(request) {
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
-    if (shared && !(await canAccessSharedKey(key, user, "delete"))) {
+    if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }
     await storageDelete(key, shared, user.username);

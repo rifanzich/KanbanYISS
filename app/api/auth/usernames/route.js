@@ -3,8 +3,6 @@ import { getSessionUser } from "../../../../lib/auth";
 import { listAccounts } from "../../../../lib/kv";
 import { errorMessage } from "../../../../lib/apiError";
 
-export const dynamic = "force-dynamic";
-
 // Any authenticated user can see the list of usernames (no roles/passwords) —
 // needed to tag "anggota terlibat" on cards and to build team rosters.
 export async function GET(request) {
