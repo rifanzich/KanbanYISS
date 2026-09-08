@@ -503,6 +503,11 @@ const RESPONSIVE_CSS = `
 .rw-calendar-day:focus, .rw-calendar-day:focus-visible {
   outline: none;
 }
+.rw-collapsed-icon:hover {
+  background: rgba(255,255,255,0.1) !important;
+  border-color: rgba(255,255,255,0.28) !important;
+  color: #fff !important;
+}
 @media (prefers-reduced-motion: reduce) {
   .rw-card, .rw-app button, .rw-app select, .rw-app input, .rw-sidebar { transition: none !important; }
   .rw-card:hover { transform: none; }
@@ -1880,32 +1885,48 @@ function Sidebar({
         </div>
 
         <div style={styles.collapsedRail}>
-          <button style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Ruang Kerja">
+          <button className="rw-collapsed-icon" style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Ruang Kerja (perluas untuk memilih)">
             <Users size={17} />
           </button>
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Insight">
+          <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectInsight} title="Insight">
             <PieChart size={17} />
           </button>
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "calendar" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Kalender">
+          <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "calendar" ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectCalendar} title="Kalender">
             <Calendar size={17} />
           </button>
           <div style={styles.collapsedDivider} />
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "board" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Papan">
+          <button
+            className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "board" ? styles.collapsedIconBtnActive : {}) }}
+            onClick={() => (wsData.boardOrder.length ? onSelectBoard(wsData.active.type === "board" ? wsData.active.id : wsData.boardOrder[0]) : onToggleCollapsed())}
+            title="Papan"
+          >
             <LayoutGrid size={17} />
           </button>
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "note" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Catatan">
+          <button
+            className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "note" ? styles.collapsedIconBtnActive : {}) }}
+            onClick={() => (wsData.noteOrder.length ? onSelectNote(wsData.active.type === "note" ? wsData.active.id : wsData.noteOrder[0]) : onToggleCollapsed())}
+            title="Catatan"
+          >
             <FileText size={17} />
           </button>
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "moodboard" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Moodboard">
+          <button
+            className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "moodboard" ? styles.collapsedIconBtnActive : {}) }}
+            onClick={() => (wsData.moodboardOrder.length ? onSelectMoodboard(wsData.active.type === "moodboard" ? wsData.active.id : wsData.moodboardOrder[0]) : onToggleCollapsed())}
+            title="Moodboard"
+          >
             <Palette size={17} />
           </button>
-          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "mindmap" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Mind Map">
+          <button
+            className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "mindmap" ? styles.collapsedIconBtnActive : {}) }}
+            onClick={() => (wsData.mindmapOrder.length ? onSelectMindmap(wsData.active.type === "mindmap" ? wsData.active.id : wsData.mindmapOrder[0]) : onToggleCollapsed())}
+            title="Mind Map"
+          >
             <GitBranch size={17} />
           </button>
           {isAdmin && (
             <>
               <div style={styles.collapsedDivider} />
-              <button style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Kelola Akun">
+              <button className="rw-collapsed-icon" style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Kelola Akun (perluas untuk mengelola)">
                 <ShieldCheck size={17} />
               </button>
             </>
