@@ -3341,6 +3341,26 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
     return { m0, cells: mCells };
   });
 
+  // Daftar ringkas di samping kalender — hanya kegiatan yang dibuat lewat
+  // kalender Rencana Tahunan (dari calendarNotes), bukan kartu papan biasa.
+  // Sengaja hanya tanggal/bulan/tahun + nama kegiatan; detail lain (jenis,
+  // tim, durasi, RAB) hanya ada di spreadsheet ekspor.
+  const annualSummaryList = Object.keys(wsData.calendarNotes || {})
+    .filter((dateStr) => dateStr.startsWith(`${annualYear}-`))
+    .sort()
+    .flatMap((dateStr) => {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      return (wsData.calendarNotes[dateStr] || [])
+        .map((note) => {
+          const board = wsData.boards[note.boardId];
+          if (!board) return null;
+          const loc = findCardLocation(board, note.monthKey, note.cardId);
+          if (!loc) return null;
+          return { key: note.id, day: d, month: MONTH_NAMES_ID[m - 1], year: y, name: loc.card.text, dateStr };
+        })
+        .filter(Boolean);
+    });
+
   // Isi dialog/panel "generator kartu" — dipakai baik inline (mode Bulanan)
   // maupun di dalam kotak dialog (mode Rencana Tahunan) untuk tanggal yang dipilih.
   const panelContent = (
@@ -3563,39 +3583,67 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             </div>
           </div>
 
-          <div style={styles.annualGrid}>
-            {annualMonths.map(({ m0, cells: mCells }) => (
-              <div key={m0} style={styles.annualMonthCard}>
-                <div style={styles.annualMonthTitle}>{MONTH_NAMES_ID[m0]}</div>
-                <div style={styles.annualMiniGrid}>
-                  {WEEKDAY_LABELS_ID.map((w) => (
-                    <div key={w} style={styles.annualWeekdayCell}>
-                      {w[0]}
+          <div style={styles.annualLayoutRow}>
+            <div style={styles.annualGrid}>
+              {annualMonths.map(({ m0, cells: mCells }) => (
+                <div key={m0} style={styles.annualMonthCard}>
+                  <div style={styles.annualMonthTitle}>{MONTH_NAMES_ID[m0]}</div>
+                  <div style={styles.annualMiniGrid}>
+                    {WEEKDAY_LABELS_ID.map((w) => (
+                      <div key={w} style={styles.annualWeekdayCell}>
+                        {w[0]}
+                      </div>
+                    ))}
+                    {mCells.map((d, i) => {
+                      if (d === null) return <div key={`b${i}`} />;
+                      const dateStr = dateStrForYM(annualYear, m0, d);
+                      const notes = notesByDate[dateStr] || [];
+                      const isToday = dateStr === todayStr;
+                      return (
+                        <div
+                          key={dateStr}
+                          className="rw-calendar-day"
+                          style={{ ...styles.annualDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(notes.length ? styles.annualDayCellHasNotes : {}) }}
+                          onClick={() => {
+                            setSelectedDate(dateStr);
+                            setDialogOpen(true);
+                          }}
+                          title={notes.length ? `${notes.length} kartu` : "Tambah kartu"}
+                        >
+                          {d}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={styles.annualSummaryPanel}>
+              <div style={styles.involvedLabel}>Daftar Kegiatan {annualYear}</div>
+              {annualSummaryList.length === 0 ? (
+                <div style={styles.insightEmpty}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
+              ) : (
+                <div style={styles.annualSummaryList}>
+                  {annualSummaryList.map((item) => (
+                    <div
+                      key={item.key}
+                      style={{ ...styles.annualSummaryItem, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
+                      onClick={() => {
+                        setSelectedDate(item.dateStr);
+                        setDialogOpen(true);
+                      }}
+                    >
+                      <span style={styles.annualSummaryDate}>
+                        {item.day} {item.month} {item.year}
+                      </span>
+                      <span style={styles.annualSummaryName}>{item.name}</span>
                     </div>
                   ))}
-                  {mCells.map((d, i) => {
-                    if (d === null) return <div key={`b${i}`} />;
-                    const dateStr = dateStrForYM(annualYear, m0, d);
-                    const notes = notesByDate[dateStr] || [];
-                    const isToday = dateStr === todayStr;
-                    return (
-                      <div
-                        key={dateStr}
-                        className="rw-calendar-day"
-                        style={{ ...styles.annualDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(notes.length ? styles.annualDayCellHasNotes : {}) }}
-                        onClick={() => {
-                          setSelectedDate(dateStr);
-                          setDialogOpen(true);
-                        }}
-                        title={notes.length ? `${notes.length} kartu` : "Tambah kartu"}
-                      >
-                        {d}
-                      </div>
-                    );
-                  })}
                 </div>
-              </div>
-            ))}
+              )}
+              <div style={styles.insightSubtitleSmall}>Rincian lengkap (jenis, tim, durasi, RAB) tersedia di file spreadsheet hasil ekspor.</div>
+            </div>
           </div>
 
           {dialogOpen && (
@@ -4210,7 +4258,14 @@ const styles = {
   rabRangeRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
-  annualGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, maxWidth: 1100 },
+  annualGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, flex: "2 1 600px" },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 1400 },
+  annualSummaryPanel: { flex: "1 1 260px", minWidth: 240, maxWidth: 340, display: "flex", flexDirection: "column", gap: 8, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 14px", position: "sticky", top: 0 },
+  annualSummaryList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 480, overflowY: "auto" },
+  annualSummaryItem: { display: "flex", flexDirection: "column", gap: 1, padding: "6px 8px", borderRadius: 6, cursor: "pointer" },
+  annualSummaryItemActive: { background: "rgba(59,130,246,0.15)" },
+  annualSummaryDate: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: "var(--text-faint)" },
+  annualSummaryName: { fontSize: 12.5, color: "var(--text-primary)", fontWeight: 600 },
   annualMonthCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: 10 },
   annualMonthTitle: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 600, fontSize: 13, color: "var(--text-primary)", marginBottom: 6, textAlign: "center" },
   annualMiniGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
