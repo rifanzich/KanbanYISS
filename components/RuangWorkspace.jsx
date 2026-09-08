@@ -1190,12 +1190,13 @@ export default function RuangWorkspace() {
   // Returns the new card's id synchronously (the id is minted before the
   // state update, not inside it) so callers — like the calendar sync — can
   // immediately remember which card they just created.
-  const addCard = (boardId, monthKey, colId, text, duration, involvedMembers, cardType, qty, createdAt) => {
+  const addCard = (boardId, monthKey, colId, text, duration, involvedMembers, cardType, qty, createdAt, rab) => {
     const finalText = (text && text.trim()) || cardType || "Kartu Baru";
     const finalQty = Number(qty) > 0 ? Number(qty) : 1;
     const finalCreatedAt = Number(createdAt) > 0 ? Number(createdAt) : Date.now();
+    const finalRab = Number(rab) > 0 ? Number(rab) : undefined;
     const newId = uid();
-    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false, priority: false };
+    const newCard = { id: newId, text: finalText, createdAt: finalCreatedAt, duration: duration || null, involvedMembers: involvedMembers || [], cardType: cardType || "", qty: finalQty, checked: false, priority: false, rab: finalRab };
     patchMonthBoard(boardId, monthKey, (mb) => {
       // Falls back to the first column if colId doesn't match anything in
       // this month's bucket (e.g. a calendar note aimed at a month that's
@@ -1298,7 +1299,7 @@ export default function RuangWorkspace() {
   // langsung dari papan (jenis, jumlah, tim terlibat, durasi, kolom tujuan) —
   // hanya saja tanggal & bulannya ditentukan oleh tanggal yang dipilih di
   // kalender, sehingga otomatis tersinkron ke papan yang sesuai.
-  const addCalendarNote = (dateStr, boardId, colId, text, cardType, duration, involvedMembers, qty) => {
+  const addCalendarNote = (dateStr, boardId, colId, text, cardType, duration, involvedMembers, qty, rab) => {
     const board = wsData.boards[boardId];
     if (!board || (!text.trim() && !cardType)) return;
     const monthKey = monthKeyFromTimestamp(dateInputToTimestamp(dateStr));
@@ -1306,7 +1307,7 @@ export default function RuangWorkspace() {
     const targetCol = monthBoard.columns.find((c) => c.id === colId) || monthBoard.columns[0];
     if (!targetCol) return;
     const finalMembers = involvedMembers && involvedMembers.length ? involvedMembers : currentUser ? [currentUser.username] : [];
-    const cardId = addCard(boardId, monthKey, targetCol.id, text, duration || null, finalMembers, cardType || "", qty, dateInputToTimestamp(dateStr));
+    const cardId = addCard(boardId, monthKey, targetCol.id, text, duration || null, finalMembers, cardType || "", qty, dateInputToTimestamp(dateStr), rab);
     const noteId = uid();
     setWsData((d) => {
       const list = d.calendarNotes[dateStr] || [];
@@ -3219,10 +3220,15 @@ const WEEKDAY_LABELS_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 // tersinkron ke papan yang dipilih pada bulan sesuai tanggalnya.
 function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, onAddCardType, onAddNote, onDeleteNote, onToggleNote, onRequestConfirm }) {
   const boardOrder = wsData.boardOrder || [];
+  const [viewMode, setViewMode] = useState("month"); // "month" | "annual"
   const [viewMonth, setViewMonth] = useState(() => currentMonthKey());
+  const [annualYear, setAnnualYear] = useState(() => new Date().getFullYear());
   const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(Date.now()));
+  const [dialogOpen, setDialogOpen] = useState(false); // dipakai khusus mode Rencana Tahunan
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
   const [selectedBoardId, setSelectedBoardId] = useState(boardOrder[0] || "");
-  const [draft, setDraft] = useState({ text: "", cardType: "", qty: 1, colId: "", involvedMembers: [], amount: "", unit: "hari" });
+  const [draft, setDraft] = useState({ text: "", cardType: "", qty: 1, colId: "", involvedMembers: [], amount: "", unit: "hari", rab: "" });
 
   useEffect(() => {
     if ((!selectedBoardId || !wsData.boards[selectedBoardId]) && boardOrder.length) setSelectedBoardId(boardOrder[0]);
@@ -3280,164 +3286,333 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
     if (!draft.text.trim() && !draft.cardType) return;
     const duration = draft.amount ? { amount: Number(draft.amount), unit: draft.unit } : { amount: 1, unit: "hari" };
     const involvedMembers = draft.involvedMembers.length > 0 ? draft.involvedMembers : currentUsername ? [currentUsername] : [];
-    onAddNote(selectedDate, selectedBoardId, draft.colId, draft.text, draft.cardType, duration, involvedMembers, draft.qty);
-    setDraft((d) => ({ ...d, text: "", cardType: "", qty: 1, involvedMembers: [], amount: "", unit: "hari" }));
+    onAddNote(selectedDate, selectedBoardId, draft.colId, draft.text, draft.cardType, duration, involvedMembers, draft.qty, draft.rab);
+    setDraft((d) => ({ ...d, text: "", cardType: "", qty: 1, involvedMembers: [], amount: "", unit: "hari", rab: "" }));
   };
+
+  // Ekspor RAB (Rencana Anggaran Biaya): kumpulkan semua kartu kalender dalam
+  // rentang tanggal yang dipilih, lalu unduh sebagai spreadsheet.
+  const exportRabRange = () => {
+    if (!rangeStart || !rangeEnd) return;
+    const start = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
+    const end = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+    const rows = [];
+    Object.keys(wsData.calendarNotes || {})
+      .filter((dateStr) => dateStr >= start && dateStr <= end)
+      .sort()
+      .forEach((dateStr) => {
+        const [y, m, d] = dateStr.split("-").map(Number);
+        (wsData.calendarNotes[dateStr] || []).forEach((note) => {
+          const board = wsData.boards[note.boardId];
+          if (!board) return;
+          const loc = findCardLocation(board, note.monthKey, note.cardId);
+          if (!loc) return;
+          rows.push({
+            Tanggal: d,
+            Bulan: MONTH_NAMES_ID[m - 1],
+            Tahun: y,
+            "Nama Kegiatan": loc.card.text,
+            "Jenis Kartu": loc.card.cardType || "",
+            Papan: board.name,
+            "Estimasi Biaya (Rp)": loc.card.rab || 0,
+          });
+        });
+      });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(
+      rows.length ? rows : [{ Tanggal: "", Bulan: "", Tahun: "", "Nama Kegiatan": "(tidak ada kegiatan pada rentang ini)", "Jenis Kartu": "", Papan: "", "Estimasi Biaya (Rp)": "" }]
+    );
+    if (rows.length) {
+      const total = rows.reduce((sum, r) => sum + (Number(r["Estimasi Biaya (Rp)"]) || 0), 0);
+      XLSX.utils.sheet_add_json(ws, [{ "Nama Kegiatan": "TOTAL", "Estimasi Biaya (Rp)": total }], { skipHeader: true, origin: -1 });
+    }
+    XLSX.utils.book_append_sheet(wb, ws, "RAB");
+    XLSX.writeFile(wb, `rab-${start}_sd_${end}.xlsx`);
+  };
+
+  const dateStrForYM = (y, m0, d) => `${y}-${String(m0 + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+  const annualMonths = Array.from({ length: 12 }, (_, m0) => {
+    const daysInMonth = new Date(annualYear, m0 + 1, 0).getDate();
+    const firstWeekdayMon0 = (new Date(annualYear, m0, 1).getDay() + 6) % 7;
+    const mCells = [];
+    for (let i = 0; i < firstWeekdayMon0; i++) mCells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) mCells.push(d);
+    return { m0, cells: mCells };
+  });
+
+  // Isi dialog/panel "generator kartu" — dipakai baik inline (mode Bulanan)
+  // maupun di dalam kotak dialog (mode Rencana Tahunan) untuk tanggal yang dipilih.
+  const panelContent = (
+    <>
+      {viewMode === "month" && <div style={styles.calendarPanelTitle}>{formatCreatedDate(dateInputToTimestamp(selectedDate))}</div>}
+
+      {selectedNotes.length === 0 ? (
+        <div style={styles.insightEmpty}>Belum ada kartu pada tanggal ini.</div>
+      ) : (
+        <div style={styles.calendarNoteList}>
+          {selectedNotes.map((note) => {
+            const resolved = resolveNote(note);
+            if (!resolved) return null;
+            return (
+              <div key={note.id} style={styles.calendarNoteItem}>
+                <label style={styles.checkLabel}>
+                  <input type="checkbox" checked={!!resolved.card.checked} onChange={() => onToggleNote(note)} style={styles.checkbox} />
+                  <span style={{ ...styles.cardText, ...(resolved.card.checked ? styles.cardTextDone : {}) }}>{resolved.card.text}</span>
+                </label>
+                <div style={styles.calendarNoteMeta}>
+                  {resolved.board.name}
+                  {resolved.card.cardType ? ` · ${resolved.card.cardType}` : ""}
+                  {resolved.card.rab ? ` · Rp${Number(resolved.card.rab).toLocaleString("id-ID")}` : ""}
+                </div>
+                <button style={styles.cardDelete} onClick={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteNote(selectedDate, note))} title="Hapus kartu" aria-label="Hapus kartu">
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {boardOrder.length === 0 ? (
+        <div style={styles.insightSubtitleSmall}>Buat papan terlebih dulu untuk bisa menambahkan kartu dari kalender.</div>
+      ) : (
+        <div style={styles.calendarAddRow}>
+          <div style={styles.calendarAddSelectRow}>
+            <select style={styles.insightTypeSelect} value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
+              {boardOrder.map((bid) => (
+                <option key={bid} value={bid}>
+                  {wsData.boards[bid]?.name}
+                </option>
+              ))}
+            </select>
+            <select style={styles.insightTypeSelect} value={draft.colId} onChange={(e) => setDraft((d) => ({ ...d, colId: e.target.value }))}>
+              {formColumns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <input
+            style={styles.addCardInput}
+            placeholder="Tulis kartu baru…"
+            value={draft.text}
+            onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))}
+            onKeyDown={(e) => e.key === "Enter" && submitCard()}
+          />
+
+          <TypeSelect
+            value={draft.cardType}
+            options={cardTypes}
+            qty={draft.qty}
+            onChange={(v) => setDraft((d) => ({ ...d, cardType: v }))}
+            onQtyChange={(v) => setDraft((d) => ({ ...d, qty: v === "" ? "" : Number(v) }))}
+            onAddOption={onAddCardType}
+          />
+
+          {isAdmin ? (
+            <div>
+              <div style={styles.involvedLabel}>Tim terlibat</div>
+              <div style={styles.chipRow}>
+                {members.map((m) => {
+                  const active = draft.involvedMembers.includes(m);
+                  return (
+                    <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(m)}>
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
+          )}
+
+          <div className="rw-duration-row" style={styles.durationRow}>
+            <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} />
+            <select style={styles.durationSelect} value={draft.unit} onChange={(e) => setDraft((d) => ({ ...d, unit: e.target.value }))}>
+              <option value="menit">Menit</option>
+              <option value="jam">Jam</option>
+              <option value="hari">Hari</option>
+            </select>
+            <span style={styles.durationHint}>kosongkan = 1 hari</span>
+          </div>
+
+          {viewMode === "annual" && (
+            <div style={styles.rabInputRow}>
+              <span style={styles.durationHint}>Estimasi RAB (Rp)</span>
+              <input
+                type="number"
+                min="0"
+                style={styles.durationInput}
+                placeholder="0"
+                value={draft.rab}
+                onChange={(e) => setDraft((d) => ({ ...d, rab: e.target.value }))}
+              />
+            </div>
+          )}
+
+          <button style={{ ...styles.submitCardBtn, alignSelf: "flex-end" }} onClick={submitCard} title="Tambahkan kartu" aria-label="Tambahkan kartu">
+            <Plus size={16} />
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div style={styles.calendarWrap}>
       <h2 style={styles.insightTitle}>Kalender</h2>
-      <div style={styles.insightSubtitle}>Rencana tahunan — pilih bulan dan tahun, lalu klik tanggal untuk menambahkan kartu. Kartu otomatis tersinkron dengan papan yang dipilih, di bulan sesuai tanggalnya.</div>
+      <div style={styles.insightSubtitle}>
+        {viewMode === "month"
+          ? "Pilih bulan dan tahun, lalu klik tanggal untuk menambahkan kartu. Kartu otomatis tersinkron dengan papan yang dipilih, di bulan sesuai tanggalnya."
+          : "Rencana tahunan — lihat 12 bulan sekaligus, klik tanggal mana pun untuk membuat kartu, lalu ekspor rentang tanggal tertentu sebagai rincian RAB."}
+      </div>
 
-      <div style={styles.calendarNavRow}>
-        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
-          ‹
+      <div style={styles.calendarModeToggle}>
+        <button style={{ ...styles.calendarModeBtn, ...(viewMode === "month" ? styles.calendarModeBtnActive : {}) }} onClick={() => setViewMode("month")}>
+          Bulanan
         </button>
-        <select style={styles.insightTypeSelect} value={monthIndex0} onChange={(e) => setViewMonth(monthKeyOf(year, Number(e.target.value)))}>
-          {MONTH_NAMES_ID.map((label, idx) => (
-            <option key={idx} value={idx}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select style={styles.insightTypeSelect} value={year} onChange={(e) => setViewMonth(monthKeyOf(Number(e.target.value), monthIndex0))}>
-          {yearOptions.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-        <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, 1))} title="Bulan berikutnya" aria-label="Bulan berikutnya">
-          ›
+        <button style={{ ...styles.calendarModeBtn, ...(viewMode === "annual" ? styles.calendarModeBtnActive : {}) }} onClick={() => setViewMode("annual")}>
+          Rencana Tahunan
         </button>
       </div>
 
-      <div style={styles.calendarGrid}>
-        {WEEKDAY_LABELS_ID.map((w) => (
-          <div key={w} style={styles.calendarWeekdayCell}>
-            {w}
+      {viewMode === "month" ? (
+        <>
+          <div style={styles.calendarNavRow}>
+            <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
+              ‹
+            </button>
+            <select style={styles.insightTypeSelect} value={monthIndex0} onChange={(e) => setViewMonth(monthKeyOf(year, Number(e.target.value)))}>
+              {MONTH_NAMES_ID.map((label, idx) => (
+                <option key={idx} value={idx}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select style={styles.insightTypeSelect} value={year} onChange={(e) => setViewMonth(monthKeyOf(Number(e.target.value), monthIndex0))}>
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+            <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, 1))} title="Bulan berikutnya" aria-label="Bulan berikutnya">
+              ›
+            </button>
           </div>
-        ))}
-        {cells.map((d, i) => {
-          if (d === null) return <div key={`blank${i}`} style={styles.calendarEmptyCell} />;
-          const dateStr = dateStrFor(d);
-          const notes = notesByDate[dateStr] || [];
-          const isSelected = dateStr === selectedDate;
-          const isToday = dateStr === todayStr;
-          return (
-            <div
-              key={dateStr}
-              className="rw-calendar-day"
-              style={{ ...styles.calendarDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(isSelected ? styles.calendarDayCellSelected : {}) }}
-              onClick={() => setSelectedDate(dateStr)}
-            >
-              <span style={styles.calendarDayNum}>{d}</span>
-              {notes.length > 0 && <span style={styles.calendarDayBadge}>{notes.length}</span>}
-            </div>
-          );
-        })}
-      </div>
 
-      <div style={styles.calendarPanel}>
-        <div style={styles.calendarPanelTitle}>{formatCreatedDate(dateInputToTimestamp(selectedDate))}</div>
-
-        {selectedNotes.length === 0 ? (
-          <div style={styles.insightEmpty}>Belum ada kartu pada tanggal ini.</div>
-        ) : (
-          <div style={styles.calendarNoteList}>
-            {selectedNotes.map((note) => {
-              const resolved = resolveNote(note);
-              if (!resolved) return null;
+          <div style={styles.calendarGrid}>
+            {WEEKDAY_LABELS_ID.map((w) => (
+              <div key={w} style={styles.calendarWeekdayCell}>
+                {w}
+              </div>
+            ))}
+            {cells.map((d, i) => {
+              if (d === null) return <div key={`blank${i}`} style={styles.calendarEmptyCell} />;
+              const dateStr = dateStrFor(d);
+              const notes = notesByDate[dateStr] || [];
+              const isSelected = dateStr === selectedDate;
+              const isToday = dateStr === todayStr;
               return (
-                <div key={note.id} style={styles.calendarNoteItem}>
-                  <label style={styles.checkLabel}>
-                    <input type="checkbox" checked={!!resolved.card.checked} onChange={() => onToggleNote(note)} style={styles.checkbox} />
-                    <span style={{ ...styles.cardText, ...(resolved.card.checked ? styles.cardTextDone : {}) }}>{resolved.card.text}</span>
-                  </label>
-                  <div style={styles.calendarNoteMeta}>
-                    {resolved.board.name}
-                    {resolved.card.cardType ? ` · ${resolved.card.cardType}` : ""}
-                  </div>
-                  <button style={styles.cardDelete} onClick={() => onRequestConfirm("Hapus kartu ini?", () => onDeleteNote(selectedDate, note))} title="Hapus kartu" aria-label="Hapus kartu">
-                    <X size={13} />
-                  </button>
+                <div
+                  key={dateStr}
+                  className="rw-calendar-day"
+                  style={{ ...styles.calendarDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(isSelected ? styles.calendarDayCellSelected : {}) }}
+                  onClick={() => setSelectedDate(dateStr)}
+                >
+                  <span style={styles.calendarDayNum}>{d}</span>
+                  {notes.length > 0 && <span style={styles.calendarDayBadge}>{notes.length}</span>}
                 </div>
               );
             })}
           </div>
-        )}
 
-        {boardOrder.length === 0 ? (
-          <div style={styles.insightSubtitleSmall}>Buat papan terlebih dulu untuk bisa menambahkan kartu dari kalender.</div>
-        ) : (
-          <div style={styles.calendarAddRow}>
-            <div style={styles.calendarAddSelectRow}>
-              <select style={styles.insightTypeSelect} value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
-                {boardOrder.map((bid) => (
-                  <option key={bid} value={bid}>
-                    {wsData.boards[bid]?.name}
-                  </option>
-                ))}
-              </select>
-              <select style={styles.insightTypeSelect} value={draft.colId} onChange={(e) => setDraft((d) => ({ ...d, colId: e.target.value }))}>
-                {formColumns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+          <div style={styles.calendarPanel}>{panelContent}</div>
+        </>
+      ) : (
+        <>
+          <div style={styles.calendarNavRow}>
+            <button style={styles.monthNavBtn} onClick={() => setAnnualYear((y) => y - 1)} title="Tahun sebelumnya" aria-label="Tahun sebelumnya">
+              ‹
+            </button>
+            <select style={styles.insightTypeSelect} value={annualYear} onChange={(e) => setAnnualYear(Number(e.target.value))}>
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+            <button style={styles.monthNavBtn} onClick={() => setAnnualYear((y) => y + 1)} title="Tahun berikutnya" aria-label="Tahun berikutnya">
+              ›
+            </button>
+          </div>
+
+          <div style={styles.rabExportPanel}>
+            <div style={styles.involvedLabel}>Ekspor RAB berdasarkan rentang tanggal</div>
+            <div style={styles.rabRangeRow}>
+              <input type="date" style={styles.startDateInput} value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} title="Dari tanggal" />
+              <span style={styles.durationHint}>sampai</span>
+              <input type="date" style={styles.startDateInput} value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} title="Sampai tanggal" />
+              <button style={styles.submitCardBtn} onClick={exportRabRange} disabled={!rangeStart || !rangeEnd} title="Ekspor RAB ke spreadsheet" aria-label="Ekspor RAB ke spreadsheet">
+                <Download size={15} />
+              </button>
             </div>
+          </div>
 
-            <input
-              style={styles.addCardInput}
-              placeholder="Tulis kartu baru…"
-              value={draft.text}
-              onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))}
-              onKeyDown={(e) => e.key === "Enter" && submitCard()}
-            />
-
-            <TypeSelect
-              value={draft.cardType}
-              options={cardTypes}
-              qty={draft.qty}
-              onChange={(v) => setDraft((d) => ({ ...d, cardType: v }))}
-              onQtyChange={(v) => setDraft((d) => ({ ...d, qty: v === "" ? "" : Number(v) }))}
-              onAddOption={onAddCardType}
-            />
-
-            {isAdmin ? (
-              <div>
-                <div style={styles.involvedLabel}>Tim terlibat</div>
-                <div style={styles.chipRow}>
-                  {members.map((m) => {
-                    const active = draft.involvedMembers.includes(m);
+          <div style={styles.annualGrid}>
+            {annualMonths.map(({ m0, cells: mCells }) => (
+              <div key={m0} style={styles.annualMonthCard}>
+                <div style={styles.annualMonthTitle}>{MONTH_NAMES_ID[m0]}</div>
+                <div style={styles.annualMiniGrid}>
+                  {WEEKDAY_LABELS_ID.map((w) => (
+                    <div key={w} style={styles.annualWeekdayCell}>
+                      {w[0]}
+                    </div>
+                  ))}
+                  {mCells.map((d, i) => {
+                    if (d === null) return <div key={`b${i}`} />;
+                    const dateStr = dateStrForYM(annualYear, m0, d);
+                    const notes = notesByDate[dateStr] || [];
+                    const isToday = dateStr === todayStr;
                     return (
-                      <button key={m} style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }} onClick={() => toggleDraftMember(m)}>
-                        {m}
-                      </button>
+                      <div
+                        key={dateStr}
+                        className="rw-calendar-day"
+                        style={{ ...styles.annualDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(notes.length ? styles.annualDayCellHasNotes : {}) }}
+                        onClick={() => {
+                          setSelectedDate(dateStr);
+                          setDialogOpen(true);
+                        }}
+                        title={notes.length ? `${notes.length} kartu` : "Tambah kartu"}
+                      >
+                        {d}
+                      </div>
                     );
                   })}
                 </div>
               </div>
-            ) : (
-              <div style={styles.assigneeReadonlyHint}>Kamu otomatis tercatat sebagai tim terlibat karena membuat kartu ini. Admin bisa menambah anggota lain.</div>
-            )}
-
-            <div className="rw-duration-row" style={styles.durationRow}>
-              <input style={styles.durationInput} type="number" min="1" placeholder="1" value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} />
-              <select style={styles.durationSelect} value={draft.unit} onChange={(e) => setDraft((d) => ({ ...d, unit: e.target.value }))}>
-                <option value="menit">Menit</option>
-                <option value="jam">Jam</option>
-                <option value="hari">Hari</option>
-              </select>
-              <span style={styles.durationHint}>kosongkan = 1 hari</span>
-              <button style={styles.submitCardBtn} onClick={submitCard} title="Tambahkan kartu" aria-label="Tambahkan kartu">
-                <Plus size={16} />
-              </button>
-            </div>
+            ))}
           </div>
-        )}
-      </div>
+
+          {dialogOpen && (
+            <div style={styles.modalBackdrop} onClick={() => setDialogOpen(false)}>
+              <div style={{ ...styles.modalBox, maxWidth: 420, maxHeight: "85vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <div style={styles.calendarDialogHeadRow}>
+                  <div style={styles.calendarPanelTitle}>{formatCreatedDate(dateInputToTimestamp(selectedDate))}</div>
+                  <button style={styles.cardDelete} onClick={() => setDialogOpen(false)} title="Tutup" aria-label="Tutup">
+                    <X size={16} />
+                  </button>
+                </div>
+                {panelContent}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -4026,6 +4201,34 @@ const styles = {
   calendarNoteMeta: { fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0, whiteSpace: "nowrap" },
   calendarAddRow: { marginTop: 2, display: "flex", flexDirection: "column", gap: 6 },
   calendarAddSelectRow: { display: "flex", gap: 6, flexWrap: "wrap" },
+
+  calendarModeToggle: { display: "flex", gap: 6, marginBottom: 4 },
+  calendarModeBtn: { padding: "6px 14px", borderRadius: 8, border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
+  calendarModeBtnActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
+
+  rabExportPanel: { display: "flex", flexDirection: "column", gap: 8, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 14px", marginBottom: 4 },
+  rabRangeRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
+
+  annualGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, maxWidth: 1100 },
+  annualMonthCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: 10 },
+  annualMonthTitle: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 600, fontSize: 13, color: "var(--text-primary)", marginBottom: 6, textAlign: "center" },
+  annualMiniGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
+  annualWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, color: "var(--text-faint)", padding: "2px 0" },
+  annualDayCell: {
+    aspectRatio: "1 / 1",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 10.5,
+    borderRadius: 4,
+    cursor: "pointer",
+    color: "var(--text-muted)",
+    border: "1px solid transparent",
+  },
+  annualDayCellHasNotes: { background: "rgba(59,130,246,0.18)", color: "var(--text-primary)", fontWeight: 700, border: "1px solid rgba(59,130,246,0.4)" },
+
+  calendarDialogHeadRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
 
   moodWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 1100 },
   moodToolbar: { display: "flex", alignItems: "center", gap: 12, margin: "4px 0 16px", flexWrap: "wrap" },
