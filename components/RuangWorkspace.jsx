@@ -1,7 +1,30 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Plus, X, Download, Bell, LogOut, ShieldCheck, PieChart, Calendar, Check, Sun, Moon, Pencil, Users, Tags, Flag, ChevronLeft, ChevronRight, Smartphone } from "lucide-react";
+import {
+  Plus,
+  X,
+  Download,
+  Bell,
+  LogOut,
+  ShieldCheck,
+  PieChart,
+  Calendar,
+  Check,
+  Sun,
+  Moon,
+  Pencil,
+  Users,
+  Tags,
+  Flag,
+  ChevronLeft,
+  ChevronRight,
+  Smartphone,
+  LayoutGrid,
+  FileText,
+  Palette,
+  GitBranch,
+} from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -490,6 +513,8 @@ const RESPONSIVE_CSS = `
     transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 2px 0 16px rgba(0,0,0,0.25);
   }
   .rw-sidebar.open { transform: translateX(0); }
+  .rw-sidebar.collapsed { width: 82% !important; min-width: 0 !important; max-width: 300px !important; }
+  .rw-collapse-btn { display: none !important; }
   .rw-topbar { display: flex; }
   .rw-main { padding: 16px !important; padding-top: 68px !important; }
   .rw-backdrop.open { display: block; position: fixed; inset: 0; background: rgba(20,20,20,0.45); z-index: 25; }
@@ -549,6 +574,7 @@ export default function RuangWorkspace() {
   const [newWsMode, setNewWsMode] = useState("personal");
   const [newWsRoster, setNewWsRoster] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [allUsernames, setAllUsernames] = useState([]);
   const [rosterPanelWsId, setRosterPanelWsId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -559,6 +585,7 @@ export default function RuangWorkspace() {
   const [isStandaloneMode, setIsStandaloneMode] = useState(false);
   const [showIosInstallHint, setShowIosInstallHint] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(true);
 
   const requestConfirm = (message, onConfirm, options) =>
     setConfirmDialog({ message, onConfirm, confirmLabel: options?.confirmLabel, onCancel: options?.onCancel });
@@ -593,8 +620,23 @@ export default function RuangWorkspace() {
     };
   }, []);
 
-  const canShowInstallButton = !isStandaloneMode && (!!installPromptEvent || isIOSDevice);
+  // Track desktop-vs-mobile viewport so the collapsed icon-rail sidebar
+  // (a desktop convenience) never renders on the phone-sized off-canvas
+  // drawer, even if the collapse preference was saved from a desktop session.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 901px)");
+    const update = () => setIsDesktopViewport(mq.matches);
+    update();
+    if (mq.addEventListener) mq.addEventListener("change", update);
+    else mq.addListener(update);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", update);
+      else mq.removeListener(update);
+    };
+  }, []);
 
+  const canShowInstallButton = !isStandaloneMode && (!!installPromptEvent || isIOSDevice);
   const handleInstallClick = async () => {
     if (installPromptEvent) {
       installPromptEvent.prompt();
@@ -636,6 +678,26 @@ export default function RuangWorkspace() {
     setTheme((t) => {
       const next = t === "light" ? "dark" : "light";
       window.storage.set("ruang-theme-pref", next, false).catch(() => {});
+      return next;
+    });
+  };
+
+  // Load saved sidebar collapse preference once logged in, and persist changes
+  useEffect(() => {
+    if (!currentUser) return;
+    (async () => {
+      try {
+        const res = await window.storage.get("ruang-sidebar-collapsed", false);
+        if (res && typeof res.value === "boolean") setSidebarCollapsed(res.value);
+      } catch (e) {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.username]);
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      window.storage.set("ruang-sidebar-collapsed", next, false).catch(() => {});
       return next;
     });
   };
@@ -1469,6 +1531,8 @@ export default function RuangWorkspace() {
       <Sidebar
         sidebarOpen={sidebarOpen}
         onClose={closeSidebar}
+        collapsed={sidebarCollapsed && isDesktopViewport}
+        onToggleCollapsed={toggleSidebarCollapsed}
         currentUser={currentUser}
         onLogout={handleLogout}
         theme={theme}
@@ -1740,6 +1804,8 @@ function AuthScreen({ mode, username, password, error, submitting, setUsername, 
 function Sidebar({
   sidebarOpen,
   onClose,
+  collapsed,
+  onToggleCollapsed,
   currentUser,
   onLogout,
   theme,
@@ -1803,6 +1869,66 @@ function Sidebar({
   onDeleteMoodboard,
   onDeleteMindmap,
 }) {
+  if (collapsed) {
+    return (
+      <aside className={`rw-sidebar collapsed ${sidebarOpen ? "open" : ""}`} style={{ ...styles.sidebar, ...styles.sidebarCollapsed }}>
+        <div style={styles.collapsedTop}>
+          <LogoMark size={22} />
+          <button className="rw-collapse-btn" style={styles.collapseToggleBtn} onClick={onToggleCollapsed} title="Perluas sidebar" aria-label="Perluas sidebar">
+            <ChevronRight size={15} />
+          </button>
+        </div>
+
+        <div style={styles.collapsedRail}>
+          <button style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Ruang Kerja">
+            <Users size={17} />
+          </button>
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Insight">
+            <PieChart size={17} />
+          </button>
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "calendar" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Kalender">
+            <Calendar size={17} />
+          </button>
+          <div style={styles.collapsedDivider} />
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "board" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Papan">
+            <LayoutGrid size={17} />
+          </button>
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "note" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Catatan">
+            <FileText size={17} />
+          </button>
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "moodboard" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Moodboard">
+            <Palette size={17} />
+          </button>
+          <button style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "mindmap" ? styles.collapsedIconBtnActive : {}) }} onClick={onToggleCollapsed} title="Mind Map">
+            <GitBranch size={17} />
+          </button>
+          {isAdmin && (
+            <>
+              <div style={styles.collapsedDivider} />
+              <button style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Kelola Akun">
+                <ShieldCheck size={17} />
+              </button>
+            </>
+          )}
+        </div>
+
+        <div style={styles.collapsedBottom}>
+          {canInstall && (
+            <button style={styles.logoutBtn} onClick={onInstallClick} title="Pasang aplikasi ke HP">
+              <Smartphone size={15} />
+            </button>
+          )}
+          <button style={styles.logoutBtn} onClick={onToggleTheme} title={theme === "light" ? "Mode gelap" : "Mode terang"}>
+            {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
+          </button>
+          <button style={styles.logoutBtn} onClick={onLogout} title="Keluar">
+            <LogOut size={15} />
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className={`rw-sidebar ${sidebarOpen ? "open" : ""}`} style={styles.sidebar}>
       <div style={styles.brandRow}>
@@ -1810,6 +1936,9 @@ function Sidebar({
           <LogoMark size={22} />
           <span style={styles.brandName}>Kanban YISS</span>
         </div>
+        <button className="rw-collapse-btn" style={styles.collapseToggleBtn} onClick={onToggleCollapsed} title="Ciutkan sidebar" aria-label="Ciutkan sidebar">
+          <ChevronLeft size={15} />
+        </button>
         <button style={styles.sidebarCloseBtn} onClick={onClose} aria-label="Tutup menu">
           <X size={20} />
         </button>
@@ -3299,32 +3428,88 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 // Shared drag-to-reposition hook for freeform canvases (moodboard cards,
 // mind-map nodes). Uses Pointer Events + setPointerCapture so the same code
 // works for mouse, touch, and pen without any window-level listeners.
+// Shared drag-to-reposition hook for freeform canvases (moodboard cards,
+// mind-map nodes). Uses Pointer Events + setPointerCapture so the same code
+// works for mouse, touch, and pen without any window-level listeners.
+//
+// On touch/pen, dragging only *arms* after a short press-and-hold — a quick
+// tap or a finger swipe (to scroll the canvas, or to tap into the text
+// field) is left alone and never turns into a drag. Mouse keeps the classic
+// instant press-and-drag since there's no scroll/tap ambiguity to resolve.
+const LONG_PRESS_MS = 350;
+const LONG_PRESS_MOVE_TOLERANCE = 10;
+
 function useDragPosition(x, y, onCommit) {
   const [pos, setPos] = useState({ x, y });
+  const [isDragging, setIsDragging] = useState(false);
   const dragging = useRef(false);
   const start = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+  const pressTimer = useRef(null);
+  const pendingEl = useRef(null);
+  const pendingPointerId = useRef(null);
+  const pendingStart = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     if (!dragging.current) setPos({ x, y });
   }, [x, y]);
 
+  const clearPressTimer = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
+  const beginDrag = (el, pointerId, clientX, clientY, originPos) => {
+    el.setPointerCapture?.(pointerId);
+    dragging.current = true;
+    setIsDragging(true);
+    start.current = { x: clientX, y: clientY, ox: originPos.x, oy: originPos.y };
+  };
+
   const onPointerDown = (e) => {
     if (e.target.closest && e.target.closest("[data-no-drag]")) return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    dragging.current = true;
-    start.current = { x: e.clientX, y: e.clientY, ox: pos.x, oy: pos.y };
+    const el = e.currentTarget;
+    if (e.pointerType === "mouse") {
+      beginDrag(el, e.pointerId, e.clientX, e.clientY, pos);
+      return;
+    }
+    // Touch/pen: arm a long-press instead of dragging immediately, so a tap
+    // or a scroll gesture that merely starts on top of the card still works.
+    pendingEl.current = el;
+    pendingPointerId.current = e.pointerId;
+    const downX = e.clientX;
+    const downY = e.clientY;
+    pendingStart.current = { x: downX, y: downY };
+    const originPos = pos;
+    clearPressTimer();
+    pressTimer.current = setTimeout(() => {
+      pressTimer.current = null;
+      beginDrag(pendingEl.current, pendingPointerId.current, downX, downY, originPos);
+    }, LONG_PRESS_MS);
   };
   const onPointerMove = (e) => {
-    if (!dragging.current) return;
-    const dx = e.clientX - start.current.x;
-    const dy = e.clientY - start.current.y;
-    setPos({ x: start.current.ox + dx, y: start.current.oy + dy });
+    if (dragging.current) {
+      const dx = e.clientX - start.current.x;
+      const dy = e.clientY - start.current.y;
+      setPos({ x: start.current.ox + dx, y: start.current.oy + dy });
+      return;
+    }
+    // Still waiting on the long-press: any real movement means the person
+    // meant to scroll or tap elsewhere, not drag — cancel the pending arm.
+    if (pressTimer.current) {
+      const dx = Math.abs(e.clientX - pendingStart.current.x);
+      const dy = Math.abs(e.clientY - pendingStart.current.y);
+      if (dx > LONG_PRESS_MOVE_TOLERANCE || dy > LONG_PRESS_MOVE_TOLERANCE) clearPressTimer();
+    }
   };
   const endDrag = (finalPos) => {
     dragging.current = false;
+    setIsDragging(false);
     onCommit(finalPos);
   };
   const onPointerUp = (e) => {
+    clearPressTimer();
     if (!dragging.current) return;
     setPos((p) => {
       endDrag(p);
@@ -3332,7 +3517,7 @@ function useDragPosition(x, y, onCommit) {
     });
   };
 
-  return { pos, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp } };
+  return { pos, isDragging, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp } };
 }
 
 function MoodboardView({ board, onUpdateTitle, onAddItem, onUpdateItem, onDeleteItem, onBringFront }) {
@@ -3370,11 +3555,18 @@ function MoodboardView({ board, onUpdateTitle, onAddItem, onUpdateItem, onDelete
 }
 
 function MoodItem({ item, z, onUpdate, onDelete, onFront }) {
-  const { pos, handlers } = useDragPosition(item.x, item.y, (p) => onUpdate({ x: p.x, y: p.y }));
+  const { pos, isDragging, handlers } = useDragPosition(item.x, item.y, (p) => onUpdate({ x: p.x, y: p.y }));
   return (
     <div
       className="rw-mood-item"
-      style={{ ...styles.moodItem, left: pos.x, top: pos.y, background: item.color || MOOD_COLORS[0], zIndex: 10 + z }}
+      style={{
+        ...styles.moodItem,
+        left: pos.x,
+        top: pos.y,
+        background: item.color || MOOD_COLORS[0],
+        zIndex: isDragging ? 999 : 10 + z,
+        ...(isDragging ? styles.moodItemDragging : {}),
+      }}
       onPointerDown={(e) => {
         onFront();
         handlers.onPointerDown(e);
@@ -3475,7 +3667,7 @@ function MindMapView({ map, onUpdateTitle, onAddNode, onUpdateNode, onDeleteNode
 }
 
 function MindNode({ node, minX, minY, isRoot, isSelected, onSelect, onUpdate, onDelete }) {
-  const { pos, handlers } = useDragPosition(node.x, node.y, (p) => onUpdate({ x: p.x, y: p.y }));
+  const { pos, isDragging, handlers } = useDragPosition(node.x, node.y, (p) => onUpdate({ x: p.x, y: p.y }));
   return (
     <div
       className="rw-mind-node"
@@ -3484,7 +3676,9 @@ function MindNode({ node, minX, minY, isRoot, isSelected, onSelect, onUpdate, on
         left: pos.x - minX,
         top: pos.y - minY,
         borderColor: node.color || MINDMAP_PALETTE[0],
+        zIndex: isDragging ? 999 : undefined,
         ...(isRoot ? styles.mindNodeRoot : {}),
+        ...(isDragging ? styles.mindNodeDragging : {}),
         ...(isSelected ? { boxShadow: `0 0 0 2px ${node.color || MINDMAP_PALETTE[0]}` } : {}),
       }}
       onPointerDown={(e) => {
@@ -3549,6 +3743,36 @@ const styles = {
   brandMark: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 20, color: "#3B82F6" },
   brandName: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 16.5, fontWeight: 700 },
   sidebarCloseBtn: { display: "none", background: "transparent", border: "none", color: "#fff", cursor: "pointer", alignItems: "center" },
+  sidebarCollapsed: { width: 68, minWidth: 68, padding: "20px 10px", alignItems: "center" },
+  collapseToggleBtn: {
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.15)",
+    color: "#C9C7BF",
+    borderRadius: 6,
+    padding: 5,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  collapsedTop: { display: "flex", flexDirection: "column", alignItems: "center", gap: 10, width: "100%" },
+  collapsedRail: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: "100%", flex: 1, overflowY: "auto", paddingTop: 4 },
+  collapsedBottom: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: "100%" },
+  collapsedDivider: { width: "60%", height: 1, background: "rgba(255,255,255,0.1)", margin: "4px 0" },
+  collapsedIconBtn: {
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#C9C7BF",
+    borderRadius: 8,
+    padding: 9,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 40,
+    height: 40,
+  },
+  collapsedIconBtnActive: { background: "rgba(59,130,246,0.28)", color: "#fff", borderColor: "#3B82F6" },
 
   userRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: "rgba(255,255,255,0.04)", borderRadius: 8 },
   userInfo: { display: "flex", flexDirection: "column", gap: 3 },
@@ -3822,7 +4046,12 @@ const styles = {
     cursor: "grab",
     touchAction: "none",
     WebkitTapHighlightColor: "transparent",
+    WebkitTouchCallout: "none",
+    WebkitUserSelect: "none",
+    userSelect: "none",
+    transition: "box-shadow 0.15s ease, transform 0.15s ease",
   },
+  moodItemDragging: { boxShadow: "0 14px 30px rgba(0,0,0,0.3)", transform: "scale(1.03)", cursor: "grabbing", zIndex: 999 },
   moodItemTop: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 },
   moodColorRow: { display: "flex", gap: 4, flexWrap: "wrap" },
   moodColorDot: { width: 13, height: 13, borderRadius: "50%", border: "1px solid rgba(0,0,0,0.15)", cursor: "pointer", padding: 0 },
@@ -3840,6 +4069,9 @@ const styles = {
     color: "#1F2937",
     fontFamily: "'Inter', system-ui, sans-serif",
     boxSizing: "border-box",
+    WebkitTouchCallout: "default",
+    WebkitUserSelect: "text",
+    userSelect: "text",
   },
 
   mindCanvas: {
@@ -3868,8 +4100,13 @@ const styles = {
     cursor: "grab",
     touchAction: "none",
     WebkitTapHighlightColor: "transparent",
+    WebkitTouchCallout: "none",
+    WebkitUserSelect: "none",
+    userSelect: "none",
     boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+    transition: "box-shadow 0.15s ease",
   },
+  mindNodeDragging: { boxShadow: "0 14px 30px rgba(0,0,0,0.3)", cursor: "grabbing", zIndex: 999 },
   mindNodeRoot: { background: "#3B82F6", borderColor: "#3B82F6", fontWeight: 700 },
   mindNodeInput: {
     flex: 1,
@@ -3880,6 +4117,9 @@ const styles = {
     fontSize: 13,
     fontFamily: "'Inter', system-ui, sans-serif",
     fontWeight: 600,
+    WebkitTouchCallout: "default",
+    WebkitUserSelect: "text",
+    userSelect: "text",
   },
   mindNodeDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   mindColorRow: { position: "absolute", bottom: -16, left: 6, display: "flex", gap: 3 },
