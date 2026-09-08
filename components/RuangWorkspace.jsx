@@ -304,19 +304,37 @@ function normalizeWsData(raw) {
     mindmaps[mmid] = { id: mm.id || mmid, title: mm.title || "Mind Map", rootId: mm.rootId, nodes };
   });
 
-  return { ...base, cardTypes, calendarNotes, boards, moodboards, moodboardOrder, mindmaps, mindmapOrder };
+  // Self-healing cleanup: prune any calendar note whose card no longer
+  // exists (e.g. deleted from the board before this fix existed, or any
+  // other path that removed a card without also clearing its note) — so
+  // stale notification badges on the calendar can't linger forever.
+  const cleanedCalendarNotes = {};
+  Object.keys(calendarNotes).forEach((dateStr) => {
+    const list = calendarNotes[dateStr] || [];
+    const filtered = list.filter((note) => {
+      const board = boards[note.boardId];
+      const monthBoard = board && board.monthly && board.monthly[note.monthKey];
+      return !!(monthBoard && monthBoard.cards && monthBoard.cards[note.cardId]);
+    });
+    if (filtered.length) cleanedCalendarNotes[dateStr] = filtered;
+  });
+
+  return { ...base, cardTypes, calendarNotes: cleanedCalendarNotes, boards, moodboards, moodboardOrder, mindmaps, mindmapOrder };
 }
 
-function useDebouncedSave(key, value, shared, ready) {
+function useDebouncedSave(key, value, shared, ready, pendingRef) {
   const timer = useRef(null);
   useEffect(() => {
     if (!ready || !key) return;
     if (timer.current) clearTimeout(timer.current);
+    if (pendingRef) pendingRef.current = true;
     timer.current = setTimeout(async () => {
       try {
         await window.storage.set(key, JSON.stringify(value), shared);
       } catch (e) {
         console.error("Gagal menyimpan:", e);
+      } finally {
+        if (pendingRef) pendingRef.current = false;
       }
     }, 400);
     return () => clearTimeout(timer.current);
@@ -784,7 +802,29 @@ export default function RuangWorkspace() {
   }, [activeWsId, workspaces]);
 
   const activeWs = workspaces ? workspaces.find((w) => w.id === activeWsId) : null;
-  useDebouncedSave(activeWs ? dataKey(activeWs.id) : null, wsData, activeWs?.mode === "team", ready && !!wsData);
+  const saveInFlightRef = useRef(false);
+  useDebouncedSave(activeWs ? dataKey(activeWs.id) : null, wsData, activeWs?.mode === "team", ready && !!wsData, saveInFlightRef);
+
+  // Polling ringan setiap 30 detik: mengambil data terbaru (berguna terutama
+  // untuk ruang tim yang diedit banyak orang) tanpa pernah mengosongkan
+  // wsData — jadi tidak ada layar "Memuat..." berkedip. Diskip kalau ada
+  // penyimpanan lokal yang sedang berjalan, dan tidak memicu render sama
+  // sekali kalau ternyata datanya tidak berubah.
+  useEffect(() => {
+    if (!activeWs || !ready) return;
+    const interval = setInterval(async () => {
+      if (saveInFlightRef.current) return;
+      try {
+        const res = await window.storage.get(dataKey(activeWs.id), activeWs.mode === "team");
+        const fresh = normalizeWsData(res && res.value ? JSON.parse(res.value) : null);
+        setWsData((current) => {
+          if (!current || saveInFlightRef.current) return current;
+          return JSON.stringify(fresh) === JSON.stringify(current) ? current : fresh;
+        });
+      } catch (e) {}
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [activeWs?.id, activeWs?.mode, ready]);
 
   // ---- Auth actions ----
   const handleCreateFirstAdmin = async () => {
