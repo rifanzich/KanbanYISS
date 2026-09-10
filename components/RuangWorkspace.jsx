@@ -3534,6 +3534,27 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   const annualTotalRab = annualSummaryList.reduce((sum, item) => sum + item.rab, 0);
   const formatRupiah = (n) => `Rp${Number(n || 0).toLocaleString("id-ID")}`;
 
+  // Ringkasan uraian kegiatan untuk mode Bulanan — sama seperti daftar di
+  // Rencana Tahunan, tapi difilter ke bulan yang sedang dilihat (viewMonth)
+  // saja, bukan satu tahun penuh.
+  const monthSummaryList = Object.keys(wsData.calendarNotes || {})
+    .filter((dateStr) => dateStr.startsWith(`${viewMonth}-`))
+    .sort()
+    .flatMap((dateStr) => {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      return (wsData.calendarNotes[dateStr] || [])
+        .map((note) => {
+          const board = wsData.boards[note.boardId];
+          if (!board) return null;
+          const loc = findCardLocation(board, note.monthKey, note.cardId);
+          if (!loc) return null;
+          return { key: note.id, day: d, month: MONTH_NAMES_ID[m - 1], year: y, name: loc.card.text, rab: Number(loc.card.rab) || 0, dateStr };
+        })
+        .filter(Boolean);
+    });
+
+  const monthTotalRab = monthSummaryList.reduce((sum, item) => sum + item.rab, 0);
+
   // Isi dialog/panel "generator kartu" — dipakai baik inline (mode Bulanan)
   // maupun di dalam kotak dialog (mode Rencana Tahunan) untuk tanggal yang dipilih.
   const panelContent = (
@@ -3633,19 +3654,17 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             <span style={styles.durationHint}>kosongkan = 1 hari</span>
           </div>
 
-          {viewMode === "annual" && (
-            <div style={styles.rabInputRow}>
-              <span style={styles.durationHint}>Estimasi RAB (Rp)</span>
-              <input
-                type="number"
-                min="0"
-                style={styles.durationInput}
-                placeholder="0"
-                value={draft.rab}
-                onChange={(e) => setDraft((d) => ({ ...d, rab: e.target.value }))}
-              />
-            </div>
-          )}
+          <div style={styles.rabInputRow}>
+            <span style={styles.durationHint}>Estimasi RAB (Rp)</span>
+            <input
+              type="number"
+              min="0"
+              style={styles.durationInput}
+              placeholder="0"
+              value={draft.rab}
+              onChange={(e) => setDraft((d) => ({ ...d, rab: e.target.value }))}
+            />
+          </div>
 
           <button style={{ ...styles.submitCardBtn, alignSelf: "flex-end" }} onClick={submitCard} title="Tambahkan kartu" aria-label="Tambahkan kartu">
             <Plus size={16} />
@@ -3656,11 +3675,11 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   );
 
   return (
-    <div style={{ ...styles.calendarWrap, ...(viewMode === "annual" ? styles.calendarWrapAnnual : {}) }}>
+    <div style={{ ...styles.calendarWrap, ...(viewMode === "annual" ? styles.calendarWrapAnnual : styles.calendarWrapMonth) }}>
       <h2 style={styles.insightTitle}>Kalender</h2>
       <div style={styles.insightSubtitle}>
         {viewMode === "month"
-          ? "Pilih bulan dan tahun, lalu klik tanggal untuk menambahkan kartu. Kartu otomatis tersinkron dengan papan yang dipilih, di bulan sesuai tanggalnya."
+          ? "Pilih bulan dan tahun, lalu klik tanggal untuk menambahkan kartu lengkap dengan estimasi RAB. Uraian kegiatan dan total RAB bulan ini tampil di samping kalender."
           : "Rencana tahunan — lihat 12 bulan sekaligus, klik tanggal mana pun untuk membuat kartu, lalu ekspor rentang tanggal tertentu sebagai rincian RAB."}
       </div>
 
@@ -3698,39 +3717,82 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             </button>
           </div>
 
-          <div style={styles.calendarGrid}>
-            {WEEKDAY_LABELS_ID.map((w, wi) => (
-              <div key={w} style={{ ...styles.calendarWeekdayCell, ...(wi >= 5 ? styles.calendarWeekdayCellWeekend : {}) }}>
-                {w}
+          <div className="rw-annual-layout" style={styles.annualLayoutRow}>
+            <div style={styles.monthMainCol}>
+              <div style={styles.calendarGrid}>
+                {WEEKDAY_LABELS_ID.map((w, wi) => (
+                  <div key={w} style={{ ...styles.calendarWeekdayCell, ...(wi >= 5 ? styles.calendarWeekdayCellWeekend : {}) }}>
+                    {w}
+                  </div>
+                ))}
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={`blank${i}`} style={styles.calendarEmptyCell} />;
+                  const dateStr = dateStrFor(d);
+                  const notes = notesByDate[dateStr] || [];
+                  const isSelected = dateStr === selectedDate;
+                  const isToday = dateStr === todayStr;
+                  const isWeekend = i % 7 === 5 || i % 7 === 6;
+                  return (
+                    <div
+                      key={dateStr}
+                      className="rw-calendar-day"
+                      style={{
+                        ...styles.calendarDayCell,
+                        ...(isWeekend ? styles.calendarDayCellWeekend : {}),
+                        ...(isToday ? styles.calendarDayCellToday : {}),
+                        ...(isSelected ? styles.calendarDayCellSelected : {}),
+                      }}
+                      onClick={() => setSelectedDate(dateStr)}
+                    >
+                      <span style={styles.calendarDayNum}>{d}</span>
+                      {notes.length > 0 && <span style={styles.calendarDayBadge}>{notes.length}</span>}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-            {cells.map((d, i) => {
-              if (d === null) return <div key={`blank${i}`} style={styles.calendarEmptyCell} />;
-              const dateStr = dateStrFor(d);
-              const notes = notesByDate[dateStr] || [];
-              const isSelected = dateStr === selectedDate;
-              const isToday = dateStr === todayStr;
-              const isWeekend = i % 7 === 5 || i % 7 === 6;
-              return (
-                <div
-                  key={dateStr}
-                  className="rw-calendar-day"
-                  style={{
-                    ...styles.calendarDayCell,
-                    ...(isWeekend ? styles.calendarDayCellWeekend : {}),
-                    ...(isToday ? styles.calendarDayCellToday : {}),
-                    ...(isSelected ? styles.calendarDayCellSelected : {}),
-                  }}
-                  onClick={() => setSelectedDate(dateStr)}
-                >
-                  <span style={styles.calendarDayNum}>{d}</span>
-                  {notes.length > 0 && <span style={styles.calendarDayBadge}>{notes.length}</span>}
-                </div>
-              );
-            })}
-          </div>
 
-          <div style={styles.calendarPanel}>{panelContent}</div>
+              <div style={styles.calendarPanel}>{panelContent}</div>
+            </div>
+
+            <div className="rw-annual-summary" style={styles.annualSummaryCol}>
+              <div style={styles.annualSummaryPanel}>
+                <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN — {monthKeyLabel(viewMonth).toUpperCase()}</div>
+                {monthSummaryList.length === 0 ? (
+                  <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan pada bulan ini.</div>
+                ) : (
+                  <div style={styles.annualSummaryTable}>
+                    <div style={styles.annualSummaryHeadRow}>
+                      <span style={styles.annualSummaryColNo}>No.</span>
+                      <span style={styles.annualSummaryColDate}>Tanggal</span>
+                      <span style={styles.annualSummaryColName}>Uraian Kegiatan</span>
+                      <span style={styles.annualSummaryColRab}>RAB</span>
+                    </div>
+                    <div style={styles.annualSummaryList}>
+                      {monthSummaryList.map((item, idx) => (
+                        <div
+                          key={item.key}
+                          style={{ ...styles.annualSummaryRow, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
+                          onClick={() => setSelectedDate(item.dateStr)}
+                        >
+                          <span style={styles.annualSummaryColNo}>{idx + 1}</span>
+                          <span style={styles.annualSummaryColDate}>
+                            {item.day} {item.month}
+                          </span>
+                          <span style={styles.annualSummaryColName}>{item.name}</span>
+                          <span style={styles.annualSummaryColRab}>{item.rab ? formatRupiah(item.rab) : "—"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.annualTotalTab}>
+                <span style={styles.annualTotalLabel}>Total RAB Bulan Ini</span>
+                <span style={styles.annualTotalValue}>{formatRupiah(monthTotalRab)}</span>
+              </div>
+            </div>
+          </div>
         </>
       ) : (
         <>
@@ -3756,8 +3818,9 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               <input type="date" style={styles.startDateInput} value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} title="Dari tanggal" />
               <span style={styles.durationHint}>sampai</span>
               <input type="date" style={styles.startDateInput} value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} title="Sampai tanggal" />
-              <button style={styles.submitCardBtn} onClick={exportRabRange} disabled={!rangeStart || !rangeEnd} title="Ekspor RAB ke spreadsheet" aria-label="Ekspor RAB ke spreadsheet">
+              <button style={styles.exportRabBtn} onClick={exportRabRange} disabled={!rangeStart || !rangeEnd} title="Ekspor RAB ke spreadsheet" aria-label="Ekspor RAB ke spreadsheet">
                 <Download size={15} />
+                Download Spreadsheet
               </button>
             </div>
           </div>
@@ -4345,6 +4408,7 @@ const styles = {
   durationAddBtn: { flex: 1, border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 500 },
   durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
   submitCardBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
+  exportRabBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", whiteSpace: "nowrap" },
   addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "var(--text-faint)", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
   noteWrap: { display: "flex", flexDirection: "column", gap: 6, height: "100%", maxWidth: 720 },
   noteTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)" },
@@ -4435,8 +4499,9 @@ const styles = {
   modalConfirm: { background: "#EF4444", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
   modalOk: { background: "#3B82F6", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 
-  calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620, width: "100%" },
+  calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620, width: "100%", margin: "0 auto" },
   calendarWrapAnnual: { maxWidth: 1600 },
+  calendarWrapMonth: { maxWidth: 1100 },
   calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0 14px" },
   calendarGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 },
   calendarWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", padding: "4px 0" },
@@ -4481,12 +4546,14 @@ const styles = {
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
   annualGrid: { display: "grid", gap: 14, flex: "1 1 700px", minWidth: 0 },
-  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
+  monthMainCol: { flex: "1 1 480px", minWidth: 0, display: "flex", flexDirection: "column", gap: 14 },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "stretch", flexWrap: "wrap", width: "100%" },
   annualSummaryCol: { flex: "1 1 300px", minWidth: 260, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10 },
   annualSummaryPanel: {
     display: "flex",
     flexDirection: "column",
-    maxHeight: 640,
+    flex: 1,
+    minHeight: 0,
     background: "var(--surface-solid)",
     border: "1px solid var(--card-border)",
     borderRadius: 10,
