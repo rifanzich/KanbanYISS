@@ -4391,13 +4391,12 @@ const styles = {
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
   annualGrid: { display: "grid", gap: 14, flex: "1 1 700px", minWidth: 0 },
-  annualLayoutRow: { display: "flex", gap: 20, alignItems: "stretch", flexWrap: "wrap", width: "100%" },
-  annualSummaryCol: { flex: "1 1 300px", minWidth: 260, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10, minHeight: 0 },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
+  annualSummaryCol: { flex: "1 1 300px", minWidth: 260, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10 },
   annualSummaryPanel: {
-    flex: 1,
-    minHeight: 0,
     display: "flex",
     flexDirection: "column",
+    maxHeight: 640,
     background: "var(--surface-solid)",
     border: "1px solid var(--card-border)",
     borderRadius: 10,
