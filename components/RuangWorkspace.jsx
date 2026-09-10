@@ -545,10 +545,22 @@ const RESPONSIVE_CSS = `
   .rw-columns-row { scroll-snap-type: x mandatory; }
   .rw-column { width: 84vw; min-width: 84vw; scroll-snap-align: start; }
   .rw-board-title { font-size: 21px; }
+  .rw-annual-summary { position: static !important; max-height: none !important; width: 100% !important; }
+  .rw-annual-layout { flex-direction: column; }
 }
 @media (max-width: 480px) {
   .rw-column { width: 90vw; min-width: 90vw; }
   .rw-duration-row { flex-wrap: wrap; }
+}
+.rw-annual-grid { grid-template-columns: 1fr; }
+@media (min-width: 560px) {
+  .rw-annual-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 1080px) {
+  .rw-annual-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 1400px) {
+  .rw-annual-grid { grid-template-columns: repeat(4, 1fr); }
 }
 `;
 
@@ -3568,7 +3580,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   );
 
   return (
-    <div style={styles.calendarWrap}>
+    <div style={{ ...styles.calendarWrap, ...(viewMode === "annual" ? styles.calendarWrapAnnual : {}) }}>
       <h2 style={styles.insightTitle}>Kalender</h2>
       <div style={styles.insightSubtitle}>
         {viewMode === "month"
@@ -3668,8 +3680,8 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             </div>
           </div>
 
-          <div style={styles.annualLayoutRow}>
-            <div style={styles.annualGrid}>
+          <div className="rw-annual-layout" style={styles.annualLayoutRow}>
+            <div className="rw-annual-grid" style={styles.annualGrid}>
               {annualMonths.map(({ m0, cells: mCells }) => (
                 <div key={m0} style={styles.annualMonthCard}>
                   <div style={styles.annualMonthTitle}>{MONTH_NAMES_ID[m0]}</div>
@@ -3705,7 +3717,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               ))}
             </div>
 
-            <div style={styles.annualSummaryPanel}>
+            <div className="rw-annual-summary" style={styles.annualSummaryPanel}>
               <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN</div>
               {annualSummaryList.length === 0 ? (
                 <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
@@ -4311,7 +4323,8 @@ const styles = {
   modalConfirm: { background: "#EF4444", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
   modalOk: { background: "#3B82F6", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 
-  calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620 },
+  calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620, width: "100%" },
+  calendarWrapAnnual: { maxWidth: 1600 },
   calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0 14px" },
   calendarGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 },
   calendarWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", padding: "4px 0" },
@@ -4353,9 +4366,23 @@ const styles = {
   rabRangeRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
-  annualGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, flex: "2 1 600px" },
-  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 1400 },
-  annualSummaryPanel: { flex: "1 1 260px", minWidth: 260, maxWidth: 360, display: "flex", flexDirection: "column", gap: 0, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, overflow: "hidden", position: "sticky", top: 0 },
+  annualGrid: { display: "grid", gap: 14, flex: "1 1 700px", minWidth: 0 },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
+  annualSummaryPanel: {
+    flex: "1 1 300px",
+    minWidth: 260,
+    maxWidth: 380,
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    background: "var(--surface-solid)",
+    border: "1px solid var(--card-border)",
+    borderRadius: 10,
+    overflow: "hidden",
+    position: "sticky",
+    top: 0,
+    maxHeight: "calc(100vh - 40px)",
+  },
   annualSummaryHeader: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.4, textTransform: "uppercase", color: "#fff", background: "#8a7a52", padding: "10px 14px" },
   annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px" },
   annualSummaryHeadRow: { display: "flex", gap: 8, padding: "8px 4px 6px", borderBottom: "2px solid var(--card-border)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-faint)" },
@@ -4381,8 +4408,26 @@ const styles = {
     color: "var(--text-muted)",
     border: "1px solid transparent",
   },
-  annualDayCellHasNotes: { background: "rgba(59,130,246,0.18)", color: "var(--text-primary)", fontWeight: 700, border: "1px solid rgba(59,130,246,0.4)" },
-  annualDayBadge: { position: "absolute", top: -3, right: -3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 7.5, fontWeight: 700, color: "#fff", background: "#EF4444", borderRadius: 6, minWidth: 11, height: 11, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 2px", lineHeight: 1 },
+  annualDayCellHasNotes: { background: "#1e3a66", color: "#fff", fontWeight: 700, border: "1px solid #3a6ea5" },
+  annualDayBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 8,
+    fontWeight: 700,
+    color: "#fff",
+    background: "#EF4444",
+    borderRadius: 7,
+    minWidth: 13,
+    height: 13,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0 2px",
+    lineHeight: 1,
+    boxShadow: "0 0 0 2px var(--surface-solid)",
+  },
 
 
   calendarDialogHeadRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
