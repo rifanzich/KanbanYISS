@@ -25,6 +25,8 @@ import {
   Palette,
   GitBranch,
   Star,
+  Maximize,
+  Minimize,
 } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
@@ -562,6 +564,13 @@ const RESPONSIVE_CSS = `
 @media (min-width: 1400px) {
   .rw-annual-grid { grid-template-columns: repeat(4, 1fr); }
 }
+.rw-app.fullscreen-mode .rw-sidebar { display: none !important; }
+.rw-app.fullscreen-mode .rw-backdrop { display: none !important; }
+.rw-app.fullscreen-mode .rw-topbar { display: none !important; }
+.rw-app.fullscreen-mode .rw-main { padding-top: 28px !important; }
+@media (max-width: 900px) {
+  .rw-app.fullscreen-mode .rw-main { padding: 16px !important; }
+}
 `;
 
 // Looks up which column currently holds a card inside one month's board —
@@ -622,6 +631,47 @@ export default function RuangWorkspace() {
   const [showIosInstallHint, setShowIosInstallHint] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [isDesktopViewport, setIsDesktopViewport] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const appRef = useRef(null);
+
+  // Keep our fullscreen UI state (sidebar hidden, main expanded) in sync if
+  // the person exits native fullscreen a way we didn't trigger — e.g.
+  // pressing Esc, or the browser's own fullscreen exit control.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleFsChange = () => {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) setIsFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", handleFsChange);
+    document.addEventListener("webkitfullscreenchange", handleFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFsChange);
+      document.removeEventListener("webkitfullscreenchange", handleFsChange);
+    };
+  }, []);
+
+  // Toggles a full-screen workspace view: the sidebar (and mobile topbar) are
+  // hidden so the board/moodboard/mind map gets the entire screen. Also asks
+  // the browser for real fullscreen (hides the address bar on phones/tablets)
+  // when that API is available — but the in-app layout change still applies
+  // even where the native API is unsupported or blocked (e.g. iOS Safari).
+  const toggleFullscreen = async () => {
+    const el = appRef.current;
+    const goingFullscreen = !isFullscreen;
+    try {
+      if (goingFullscreen) {
+        if (el?.requestFullscreen) await el.requestFullscreen();
+        else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      } else if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      }
+    } catch (e) {
+      // Ignore — fall through and still flip the in-app layout below.
+    }
+    setIsFullscreen(goingFullscreen);
+    if (goingFullscreen) setSidebarOpen(false);
+  };
 
   const requestConfirm = (message, onConfirm, options) =>
     setConfirmDialog({ message, onConfirm, confirmLabel: options?.confirmLabel, onCancel: options?.onCancel });
@@ -1616,7 +1666,7 @@ export default function RuangWorkspace() {
   };
 
   return (
-    <div className="rw-app" data-theme={theme} style={styles.app}>
+    <div ref={appRef} className={`rw-app ${isFullscreen ? "fullscreen-mode" : ""}`} data-theme={theme} style={styles.app}>
       <style>{RESPONSIVE_CSS}</style>
 
       <div className="rw-topbar" style={styles.topbar}>
@@ -1715,7 +1765,21 @@ export default function RuangWorkspace() {
         onDeleteNote={deleteNote}
         onDeleteMoodboard={deleteMoodboard}
         onDeleteMindmap={deleteMindmap}
+        urgentCount={urgentCount}
+        overdue={overdue}
+        dueSoon={dueSoon}
+        showNotifPanel={showNotifPanel}
+        onToggleNotifPanel={() => setShowNotifPanel((v) => !v)}
+        onGoToUrgentCard={goToUrgentCard}
       />
+      <button
+        style={styles.fullscreenBtn}
+        onClick={toggleFullscreen}
+        title={isFullscreen ? "Keluar layar penuh" : "Layar penuh"}
+        aria-label={isFullscreen ? "Keluar layar penuh" : "Layar penuh"}
+      >
+        {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+      </button>
       <main className="rw-main" style={styles.main}>
         {activeWs?.mode === "team" && (
           <div style={styles.teamBanner}>Ruang tim — hanya anggota yang disetujui admin yang bisa membuka dan mengedit ruang ini.</div>
@@ -1785,40 +1849,6 @@ export default function RuangWorkspace() {
           </div>
         )}
       </main>
-
-      {/* Notification bell */}
-      <button style={styles.bellBtn} onClick={() => setShowNotifPanel((v) => !v)} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
-        <Bell size={19} />
-        {urgentCount > 0 && <span style={styles.bellBadge}>{urgentCount}</span>}
-      </button>
-      {showNotifPanel && (
-        <div style={styles.notifPanel}>
-          <div style={styles.notifTitle}>Notifikasi Tenggat</div>
-          {urgentCount === 0 && <div style={styles.notifEmpty}>Tidak ada kartu yang mendekati atau melewati tenggat.</div>}
-          {overdue.length > 0 && (
-            <div style={styles.notifGroup}>
-              <div style={styles.notifGroupLabelOverdue}>Terlambat</div>
-              {overdue.map((it, i) => (
-                <div key={i} style={styles.notifItem} onClick={() => goToUrgentCard(it)}>
-                  <div style={styles.notifItemText}>{it.cardText}</div>
-                  <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {dueSoon.length > 0 && (
-            <div style={styles.notifGroup}>
-              <div style={styles.notifGroupLabelSoon}>Mendekati tenggat (&lt; 12 jam)</div>
-              {dueSoon.map((it, i) => (
-                <div key={i} style={styles.notifItem} onClick={() => goToUrgentCard(it)}>
-                  <div style={styles.notifItemText}>{it.cardText}</div>
-                  <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {confirmDialog && (
         <div style={styles.modalBackdrop} onClick={() => setConfirmDialog(null)}>
@@ -1967,7 +1997,42 @@ function Sidebar({
   onDeleteNote,
   onDeleteMoodboard,
   onDeleteMindmap,
+  urgentCount,
+  overdue,
+  dueSoon,
+  showNotifPanel,
+  onToggleNotifPanel,
+  onGoToUrgentCard,
 }) {
+  const notifPanel = showNotifPanel && (
+    <div style={{ ...styles.notifPanel, left: collapsed ? 74 : 14 }}>
+      <div style={styles.notifTitle}>Notifikasi Tenggat</div>
+      {urgentCount === 0 && <div style={styles.notifEmpty}>Tidak ada kartu yang mendekati atau melewati tenggat.</div>}
+      {overdue.length > 0 && (
+        <div style={styles.notifGroup}>
+          <div style={styles.notifGroupLabelOverdue}>Terlambat</div>
+          {overdue.map((it, i) => (
+            <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
+              <div style={styles.notifItemText}>{it.cardText}</div>
+              <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {dueSoon.length > 0 && (
+        <div style={styles.notifGroup}>
+          <div style={styles.notifGroupLabelSoon}>Mendekati tenggat (&lt; 12 jam)</div>
+          {dueSoon.map((it, i) => (
+            <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
+              <div style={styles.notifItemText}>{it.cardText}</div>
+              <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   if (collapsed) {
     return (
       <aside className={`rw-sidebar collapsed ${sidebarOpen ? "open" : ""}`} style={{ ...styles.sidebar, ...styles.sidebarCollapsed }}>
@@ -1981,6 +2046,10 @@ function Sidebar({
         <div style={styles.collapsedRail}>
           <button className="rw-collapsed-icon" style={styles.collapsedIconBtn} onClick={onToggleCollapsed} title="Ruang Kerja (perluas untuk memilih)">
             <Users size={17} />
+          </button>
+          <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, position: "relative" }} onClick={onToggleNotifPanel} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
+            <Bell size={16} />
+            {urgentCount > 0 && <span style={styles.bellBadge}>{urgentCount}</span>}
           </button>
           <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectInsight} title="Insight">
             <PieChart size={17} />
@@ -2040,6 +2109,7 @@ function Sidebar({
             <LogOut size={15} />
           </button>
         </div>
+        {notifPanel}
       </aside>
     );
   }
@@ -2070,6 +2140,10 @@ function Sidebar({
               <Smartphone size={15} />
             </button>
           )}
+          <button style={styles.bellBtn} onClick={onToggleNotifPanel} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
+            <Bell size={15} />
+            {urgentCount > 0 && <span style={styles.bellBadge}>{urgentCount}</span>}
+          </button>
           <button style={styles.logoutBtn} onClick={onToggleTheme} title={theme === "light" ? "Mode gelap" : "Mode terang"}>
             {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
           </button>
@@ -2078,6 +2152,7 @@ function Sidebar({
           </button>
         </div>
       </div>
+      {notifPanel}
 
       {isAdmin && (
         <div style={styles.wsGroup}>
@@ -3809,7 +3884,13 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 // field) is left alone and never turns into a drag. Mouse keeps the classic
 // instant press-and-drag since there's no scroll/tap ambiguity to resolve.
 const LONG_PRESS_MS = 350;
-const LONG_PRESS_MOVE_TOLERANCE = 10;
+// Touchscreens (especially budget Android tablets) report noticeably
+// jitterier coordinates than a mouse while a finger is held still, so the
+// tolerance needs to be looser than a desktop pointer would need — too tight
+// and the pending long-press gets cancelled by the finger's own tremor
+// before it ever fires, which is what made touch-and-hold dragging feel
+// broken on phones/tablets.
+const LONG_PRESS_MOVE_TOLERANCE = 18;
 
 function useDragPosition(x, y, onCommit) {
   const [pos, setPos] = useState({ x, y });
@@ -3848,6 +3929,12 @@ function useDragPosition(x, y, onCommit) {
     }
     // Touch/pen: arm a long-press instead of dragging immediately, so a tap
     // or a scroll gesture that merely starts on top of the card still works.
+    // Some mobile browsers (older Android WebViews, older iPad Safari) don't
+    // fully honour `touch-action: none` while this decision is still
+    // pending, and will start scrolling the canvas out from under the
+    // finger before the long-press ever fires — preventDefault here as a
+    // second line of defense so that can't happen.
+    e.preventDefault();
     pendingEl.current = el;
     pendingPointerId.current = e.pointerId;
     const downX = e.clientX;
@@ -3862,6 +3949,7 @@ function useDragPosition(x, y, onCommit) {
   };
   const onPointerMove = (e) => {
     if (dragging.current) {
+      if (e.pointerType !== "mouse") e.preventDefault();
       const dx = e.clientX - start.current.x;
       const dy = e.clientY - start.current.y;
       setPos({ x: start.current.ox + dx, y: start.current.oy + dy });
@@ -3873,6 +3961,7 @@ function useDragPosition(x, y, onCommit) {
       const dx = Math.abs(e.clientX - pendingStart.current.x);
       const dy = Math.abs(e.clientY - pendingStart.current.y);
       if (dx > LONG_PRESS_MOVE_TOLERANCE || dy > LONG_PRESS_MOVE_TOLERANCE) clearPressTimer();
+      else if (e.pointerType !== "mouse") e.preventDefault();
     }
   };
   const endDrag = (finalPos) => {
@@ -4325,9 +4414,10 @@ const styles = {
   memberInput: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, padding: "6px 8px", color: "#fff", fontSize: 13, outline: "none" },
   memberAddBtn: { background: "#10B981", color: "#fff", border: "none", borderRadius: 5, padding: "7px 0", fontSize: 12.5, cursor: "pointer", fontWeight: 500 },
 
-  bellBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#111111", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
+  bellBtn: { position: "relative", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.08)", color: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
+  fullscreenBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#111111", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
   bellBadge: { position: "absolute", top: -3, right: -3, background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
-  notifPanel: { position: "fixed", top: 62, right: 14, width: 290, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 50, display: "flex", flexDirection: "column", gap: 10 },
+  notifPanel: { position: "fixed", top: 64, width: 280, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 60, display: "flex", flexDirection: "column", gap: 10 },
   notifTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   notifEmpty: { fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" },
   notifGroup: { display: "flex", flexDirection: "column", gap: 5 },
