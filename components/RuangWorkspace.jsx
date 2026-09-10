@@ -4547,8 +4547,18 @@ const styles = {
 
   annualGrid: { display: "grid", gap: 14, flex: "1 1 700px", minWidth: 0 },
   monthMainCol: { flex: "1 1 480px", minWidth: 0, display: "flex", flexDirection: "column", gap: 14 },
-  annualLayoutRow: { display: "flex", gap: 20, alignItems: "stretch", flexWrap: "wrap", width: "100%" },
-  annualSummaryCol: { flex: "1 1 300px", minWidth: 260, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10 },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
+  annualSummaryCol: {
+    flex: "1 1 300px",
+    minWidth: 260,
+    maxWidth: 380,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    position: "sticky",
+    top: 20,
+    maxHeight: "calc(100vh - 40px)",
+  },
   annualSummaryPanel: {
     display: "flex",
     flexDirection: "column",
