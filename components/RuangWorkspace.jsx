@@ -545,7 +545,7 @@ const RESPONSIVE_CSS = `
   .rw-columns-row { scroll-snap-type: x mandatory; }
   .rw-column { width: 84vw; min-width: 84vw; scroll-snap-align: start; }
   .rw-board-title { font-size: 21px; }
-  .rw-annual-summary { position: static !important; max-height: none !important; width: 100% !important; }
+  .rw-annual-summary { position: static !important; max-height: none !important; width: 100% !important; max-width: 100% !important; }
   .rw-annual-layout { flex-direction: column; }
 }
 @media (max-width: 480px) {
@@ -3440,8 +3440,6 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 
   // Daftar ringkas di samping kalender — hanya kegiatan yang dibuat lewat
   // kalender Rencana Tahunan (dari calendarNotes), bukan kartu papan biasa.
-  // Sengaja hanya tanggal/bulan/tahun + nama kegiatan; detail lain (jenis,
-  // tim, durasi, RAB) hanya ada di spreadsheet ekspor.
   const annualSummaryList = Object.keys(wsData.calendarNotes || {})
     .filter((dateStr) => dateStr.startsWith(`${annualYear}-`))
     .sort()
@@ -3453,10 +3451,13 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           if (!board) return null;
           const loc = findCardLocation(board, note.monthKey, note.cardId);
           if (!loc) return null;
-          return { key: note.id, day: d, month: MONTH_NAMES_ID[m - 1], year: y, name: loc.card.text, dateStr };
+          return { key: note.id, day: d, month: MONTH_NAMES_ID[m - 1], year: y, name: loc.card.text, rab: Number(loc.card.rab) || 0, dateStr };
         })
         .filter(Boolean);
     });
+
+  const annualTotalRab = annualSummaryList.reduce((sum, item) => sum + item.rab, 0);
+  const formatRupiah = (n) => `Rp${Number(n || 0).toLocaleString("id-ID")}`;
 
   // Isi dialog/panel "generator kartu" — dipakai baik inline (mode Bulanan)
   // maupun di dalam kotak dialog (mode Rencana Tahunan) untuk tanggal yang dipilih.
@@ -3623,8 +3624,8 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           </div>
 
           <div style={styles.calendarGrid}>
-            {WEEKDAY_LABELS_ID.map((w) => (
-              <div key={w} style={styles.calendarWeekdayCell}>
+            {WEEKDAY_LABELS_ID.map((w, wi) => (
+              <div key={w} style={{ ...styles.calendarWeekdayCell, ...(wi >= 5 ? styles.calendarWeekdayCellWeekend : {}) }}>
                 {w}
               </div>
             ))}
@@ -3634,11 +3635,17 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               const notes = notesByDate[dateStr] || [];
               const isSelected = dateStr === selectedDate;
               const isToday = dateStr === todayStr;
+              const isWeekend = i % 7 === 5 || i % 7 === 6;
               return (
                 <div
                   key={dateStr}
                   className="rw-calendar-day"
-                  style={{ ...styles.calendarDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(isSelected ? styles.calendarDayCellSelected : {}) }}
+                  style={{
+                    ...styles.calendarDayCell,
+                    ...(isWeekend ? styles.calendarDayCellWeekend : {}),
+                    ...(isToday ? styles.calendarDayCellToday : {}),
+                    ...(isSelected ? styles.calendarDayCellSelected : {}),
+                  }}
                   onClick={() => setSelectedDate(dateStr)}
                 >
                   <span style={styles.calendarDayNum}>{d}</span>
@@ -3686,8 +3693,8 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                 <div key={m0} style={styles.annualMonthCard}>
                   <div style={styles.annualMonthTitle}>{MONTH_NAMES_ID[m0]}</div>
                   <div style={styles.annualMiniGrid}>
-                    {WEEKDAY_LABELS_ID.map((w) => (
-                      <div key={w} style={styles.annualWeekdayCell}>
+                    {WEEKDAY_LABELS_ID.map((w, wi) => (
+                      <div key={w} style={{ ...styles.annualWeekdayCell, ...(wi >= 5 ? styles.calendarWeekdayCellWeekend : {}) }}>
                         {w[0]}
                       </div>
                     ))}
@@ -3696,11 +3703,17 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                       const dateStr = dateStrForYM(annualYear, m0, d);
                       const notes = notesByDate[dateStr] || [];
                       const isToday = dateStr === todayStr;
+                      const isWeekend = i % 7 === 5 || i % 7 === 6;
                       return (
                         <div
                           key={dateStr}
                           className="rw-calendar-day"
-                          style={{ ...styles.annualDayCell, ...(isToday ? styles.calendarDayCellToday : {}), ...(notes.length ? styles.annualDayCellHasNotes : {}) }}
+                          style={{
+                            ...styles.annualDayCell,
+                            ...(isWeekend ? styles.annualDayCellWeekend : {}),
+                            ...(isToday ? styles.calendarDayCellToday : {}),
+                            ...(notes.length ? styles.annualDayCellHasNotes : {}),
+                          }}
                           onClick={() => {
                             setSelectedDate(dateStr);
                             setDialogOpen(true);
@@ -3717,38 +3730,47 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               ))}
             </div>
 
-            <div className="rw-annual-summary" style={styles.annualSummaryPanel}>
-              <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN</div>
-              {annualSummaryList.length === 0 ? (
-                <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
-              ) : (
-                <div style={styles.annualSummaryTable}>
-                  <div style={styles.annualSummaryHeadRow}>
-                    <span style={styles.annualSummaryColNo}>No.</span>
-                    <span style={styles.annualSummaryColDate}>Tanggal</span>
-                    <span style={styles.annualSummaryColName}>Uraian Kegiatan</span>
+            <div className="rw-annual-summary" style={styles.annualSummaryCol}>
+              <div style={styles.annualSummaryPanel}>
+                <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN</div>
+                {annualSummaryList.length === 0 ? (
+                  <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
+                ) : (
+                  <div style={styles.annualSummaryTable}>
+                    <div style={styles.annualSummaryHeadRow}>
+                      <span style={styles.annualSummaryColNo}>No.</span>
+                      <span style={styles.annualSummaryColDate}>Tanggal</span>
+                      <span style={styles.annualSummaryColName}>Uraian Kegiatan</span>
+                      <span style={styles.annualSummaryColRab}>RAB</span>
+                    </div>
+                    <div style={styles.annualSummaryList}>
+                      {annualSummaryList.map((item, idx) => (
+                        <div
+                          key={item.key}
+                          style={{ ...styles.annualSummaryRow, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
+                          onClick={() => {
+                            setSelectedDate(item.dateStr);
+                            setDialogOpen(true);
+                          }}
+                        >
+                          <span style={styles.annualSummaryColNo}>{idx + 1}</span>
+                          <span style={styles.annualSummaryColDate}>
+                            {item.day} {item.month} {item.year}
+                          </span>
+                          <span style={styles.annualSummaryColName}>{item.name}</span>
+                          <span style={styles.annualSummaryColRab}>{item.rab ? formatRupiah(item.rab) : "—"}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={styles.annualSummaryList}>
-                    {annualSummaryList.map((item, idx) => (
-                      <div
-                        key={item.key}
-                        style={{ ...styles.annualSummaryRow, ...(item.dateStr === selectedDate ? styles.annualSummaryItemActive : {}) }}
-                        onClick={() => {
-                          setSelectedDate(item.dateStr);
-                          setDialogOpen(true);
-                        }}
-                      >
-                        <span style={styles.annualSummaryColNo}>{idx + 1}</span>
-                        <span style={styles.annualSummaryColDate}>
-                          {item.day} {item.month} {item.year}
-                        </span>
-                        <span style={styles.annualSummaryColName}>{item.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div style={{ ...styles.insightSubtitleSmall, padding: "6px 14px 12px" }}>Rincian lengkap (jenis, tim, durasi, RAB) tersedia di file spreadsheet hasil ekspor.</div>
+                )}
+                <div style={{ ...styles.insightSubtitleSmall, padding: "6px 14px 8px", flexShrink: 0 }}>Rincian lengkap (jenis, tim, durasi) tersedia di file spreadsheet hasil ekspor.</div>
+              </div>
+
+              <div style={styles.annualTotalTab}>
+                <span style={styles.annualTotalLabel}>Total RAB</span>
+                <span style={styles.annualTotalValue}>{formatRupiah(annualTotalRab)}</span>
+              </div>
             </div>
           </div>
 
@@ -4328,6 +4350,7 @@ const styles = {
   calendarNavRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0 14px" },
   calendarGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 },
   calendarWeekdayCell: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--text-faint)", padding: "4px 0" },
+  calendarWeekdayCellWeekend: { color: "#EF4444" },
   calendarEmptyCell: { aspectRatio: "1 / 1" },
   calendarDayCell: {
     position: "relative",
@@ -4347,6 +4370,7 @@ const styles = {
     outline: "none",
   },
   calendarDayCellToday: { borderColor: "#10B981", boxShadow: "0 0 0 1px #10B981 inset" },
+  calendarDayCellWeekend: { color: "#EF4444" },
   calendarDayCellSelected: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
   calendarDayNum: { fontWeight: 600 },
   calendarDayBadge: { position: "absolute", top: 3, right: 3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, color: "#fff", background: "#EF4444", borderRadius: 8, minWidth: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" },
@@ -4367,31 +4391,62 @@ const styles = {
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
   annualGrid: { display: "grid", gap: 14, flex: "1 1 700px", minWidth: 0 },
-  annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
+  annualLayoutRow: { display: "flex", gap: 20, alignItems: "stretch", flexWrap: "wrap", width: "100%" },
+  annualSummaryCol: { flex: "1 1 300px", minWidth: 260, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10, minHeight: 0 },
   annualSummaryPanel: {
-    flex: "1 1 300px",
-    minWidth: 260,
-    maxWidth: 380,
+    flex: 1,
+    minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    gap: 0,
     background: "var(--surface-solid)",
     border: "1px solid var(--card-border)",
     borderRadius: 10,
     overflow: "hidden",
-    position: "sticky",
-    top: 0,
-    maxHeight: "calc(100vh - 40px)",
   },
-  annualSummaryHeader: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.4, textTransform: "uppercase", color: "#fff", background: "#8a7a52", padding: "10px 14px" },
-  annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px" },
-  annualSummaryHeadRow: { display: "flex", gap: 8, padding: "8px 4px 6px", borderBottom: "2px solid var(--card-border)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-faint)" },
-  annualSummaryList: { display: "flex", flexDirection: "column", maxHeight: 460, overflowY: "auto" },
+  annualTotalTab: {
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    background: "#8a7a52",
+    border: "1px solid #a3915f",
+    borderRadius: 10,
+    padding: "12px 16px",
+  },
+  annualTotalLabel: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.3, textTransform: "uppercase", color: "#fff" },
+  annualTotalValue: { fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15.5, color: "#fff" },
+  annualSummaryHeader: {
+    flexShrink: 0,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    fontWeight: 700,
+    fontSize: 13,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    color: "#fff",
+    background: "#8a7a52",
+    padding: "10px 14px",
+  },
+  annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px", flex: 1, minHeight: 0 },
+  annualSummaryHeadRow: {
+    flexShrink: 0,
+    display: "flex",
+    gap: 8,
+    padding: "8px 4px 6px",
+    borderBottom: "2px solid var(--card-border)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 9.5,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    color: "var(--text-faint)",
+  },
+  annualSummaryList: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflowY: "auto" },
   annualSummaryRow: { display: "flex", gap: 8, padding: "6px 4px", borderBottom: "1px solid var(--card-border)", cursor: "pointer", alignItems: "baseline" },
   annualSummaryItemActive: { background: "rgba(59,130,246,0.15)" },
   annualSummaryColNo: { flex: "0 0 22px", fontSize: 11, color: "var(--text-faint)" },
   annualSummaryColDate: { flex: "0 0 92px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-muted)" },
   annualSummaryColName: { flex: "1 1 auto", fontSize: 12, color: "var(--text-primary)", fontWeight: 600, lineHeight: 1.3 },
+  annualSummaryColRab: { flex: "0 0 78px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-muted)", textAlign: "right" },
   annualMonthCard: { background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: 10 },
   annualMonthTitle: { fontFamily: "'Inter', system-ui, sans-serif", fontWeight: 600, fontSize: 13, color: "var(--text-primary)", marginBottom: 6, textAlign: "center" },
   annualMiniGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
@@ -4409,6 +4464,7 @@ const styles = {
     border: "1px solid transparent",
   },
   annualDayCellHasNotes: { background: "#1e3a66", color: "#fff", fontWeight: 700, border: "1px solid #3a6ea5" },
+  annualDayCellWeekend: { color: "#EF4444" },
   annualDayBadge: {
     position: "absolute",
     top: -4,
