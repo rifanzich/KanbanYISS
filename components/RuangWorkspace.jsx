@@ -3554,7 +3554,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   const [dialogOpen, setDialogOpen] = useState(false); // dipakai khusus mode Rencana Tahunan
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
-  const [rabPreviewOpen, setRabPreviewOpen] = useState(false);
+  const [rangePreviewActive, setRangePreviewActive] = useState(false);
   const [selectedBoardId, setSelectedBoardId] = useState(boardOrder[0] || "");
   const [draft, setDraft] = useState({ text: "", cardType: "", qty: 1, colId: "", involvedMembers: [], amount: "", unit: "hari", rab: "" });
 
@@ -3654,6 +3654,15 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
     return { start, end };
   };
 
+  // Kalau tanggal rentang dikosongkan sementara preview aktif, matikan
+  // preview-nya juga — jangan biarkan mode preview "menggantung" tanpa rentang.
+  useEffect(() => {
+    if ((!rangeStart || !rangeEnd) && rangePreviewActive) setRangePreviewActive(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeStart, rangeEnd]);
+
+  const previewRange = rangePreviewActive ? normalizedRange() : null;
+
   const exportRabRange = () => {
     const range = normalizedRange();
     if (!range) return;
@@ -3684,8 +3693,11 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 
   // Daftar ringkas di samping kalender — hanya kegiatan yang dibuat lewat
   // kalender Rencana Tahunan (dari calendarNotes), bukan kartu papan biasa.
+  // Saat mode preview rentang tanggal aktif, daftar ini otomatis difilter
+  // ke rentang tersebut saja (live, ikut berubah selagi rentang diubah).
   const annualSummaryList = Object.keys(wsData.calendarNotes || {})
     .filter((dateStr) => dateStr.startsWith(`${annualYear}-`))
+    .filter((dateStr) => !previewRange || (dateStr >= previewRange.start && dateStr <= previewRange.end))
     .sort()
     .flatMap((dateStr) => {
       const [y, m, d] = dateStr.split("-").map(Number);
@@ -3985,11 +3997,25 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           </div>
 
           <div style={styles.rabExportPanel}>
-            <div style={styles.involvedLabel}>Ekspor RAB berdasarkan rentang tanggal</div>
+            <div style={styles.involvedLabel}>Ekspor / preview RAB berdasarkan rentang tanggal</div>
             <div style={styles.rabRangeRow}>
               <input type="date" style={styles.startDateInput} value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} title="Dari tanggal" />
               <span style={styles.durationHint}>sampai</span>
               <input type="date" style={styles.startDateInput} value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} title="Sampai tanggal" />
+              <button
+                style={{
+                  ...styles.previewRabBtn,
+                  ...(rangePreviewActive ? styles.previewRabBtnActive : {}),
+                  ...(!rangeStart || !rangeEnd ? styles.rabBtnDisabled : {}),
+                }}
+                onClick={() => setRangePreviewActive((v) => !v)}
+                disabled={!rangeStart || !rangeEnd}
+                title="Highlight rentang tanggal ini langsung di kalender"
+                aria-label="Preview"
+              >
+                <Eye size={15} />
+                {rangePreviewActive ? "Preview Aktif" : "Preview"}
+              </button>
               <button
                 style={{ ...styles.exportRabBtn, ...(!rangeStart || !rangeEnd ? styles.rabBtnDisabled : {}) }}
                 onClick={exportRabRange}
@@ -3999,16 +4025,6 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               >
                 <Download size={15} />
                 Download Spreadsheet
-              </button>
-              <button
-                style={{ ...styles.previewRabBtn, ...(!rangeStart || !rangeEnd ? styles.rabBtnDisabled : {}) }}
-                onClick={() => setRabPreviewOpen(true)}
-                disabled={!rangeStart || !rangeEnd}
-                title="Lihat pratinjau sebelum diunduh"
-                aria-label="Preview"
-              >
-                <Eye size={15} />
-                Preview
               </button>
             </div>
           </div>
@@ -4030,7 +4046,12 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                       const notes = notesByDate[dateStr] || [];
                       const isToday = dateStr === todayStr;
                       const isWeekend = i % 7 === 5 || i % 7 === 6;
-                      const isSelected = dateStr === selectedDate;
+                      // Tanpa preview rentang tanggal aktif, kalender tampil
+                      // normal apa adanya (tidak ada yang diredupkan). Begitu
+                      // rentang dipilih DAN tombol Preview diaktifkan, baru
+                      // tanggal di dalam rentang di-highlight dan sisanya
+                      // diredupkan — live, ikut berubah selagi rentang diubah.
+                      const inPreviewRange = previewRange && dateStr >= previewRange.start && dateStr <= previewRange.end;
                       return (
                         <div
                           key={dateStr}
@@ -4040,7 +4061,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                             ...(isWeekend ? styles.annualDayCellWeekend : {}),
                             ...(isToday ? styles.calendarDayCellToday : {}),
                             ...(notes.length ? styles.annualDayCellHasNotes : {}),
-                            ...(isSelected ? styles.annualDayCellSelected : styles.annualDayCellDim),
+                            ...(previewRange ? (inPreviewRange ? styles.annualDayCellSelected : styles.annualDayCellDim) : {}),
                           }}
                           onClick={() => {
                             setSelectedDate(dateStr);
@@ -4060,9 +4081,13 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
 
             <div className="rw-annual-summary" style={styles.annualSummaryCol}>
               <div style={styles.annualSummaryPanel}>
-                <div style={styles.annualSummaryHeader}>URAIAN KEGIATAN</div>
+                <div style={styles.annualSummaryHeader}>
+                  URAIAN KEGIATAN{previewRange ? ` — ${previewRange.start} S/D ${previewRange.end}` : ""}
+                </div>
                 {annualSummaryList.length === 0 ? (
-                  <div style={{ ...styles.insightEmpty, padding: "14px" }}>Belum ada kegiatan yang ditambahkan lewat kalender ini.</div>
+                  <div style={{ ...styles.insightEmpty, padding: "14px" }}>
+                    {previewRange ? "Tidak ada kegiatan pada rentang tanggal ini." : "Belum ada kegiatan yang ditambahkan lewat kalender ini."}
+                  </div>
                 ) : (
                   <div style={styles.annualSummaryTable}>
                     <div style={styles.annualSummaryHeadRow}>
@@ -4096,7 +4121,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               </div>
 
               <div style={styles.annualTotalTab}>
-                <span style={styles.annualTotalLabel}>Total RAB</span>
+                <span style={styles.annualTotalLabel}>{previewRange ? "Total RAB Rentang Ini" : "Total RAB"}</span>
                 <span style={styles.annualTotalValue}>{formatRupiah(annualTotalRab)}</span>
               </div>
             </div>
@@ -4115,80 +4140,6 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               </div>
             </div>
           )}
-
-          {rabPreviewOpen &&
-            (() => {
-              const range = normalizedRange();
-              const previewRows = range ? computeRabRangeRows(range.start, range.end) : [];
-              const previewTotal = previewRows.reduce((sum, r) => sum + (Number(r["Estimasi Biaya (Rp)"]) || 0), 0);
-              return (
-                <div style={styles.modalBackdrop} onClick={() => setRabPreviewOpen(false)}>
-                  <div style={{ ...styles.modalBox, maxWidth: 760, maxHeight: "85vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-                    <div style={styles.calendarDialogHeadRow}>
-                      <div style={styles.calendarPanelTitle}>
-                        Preview RAB {range ? `— ${range.start} s/d ${range.end}` : ""}
-                      </div>
-                      <button style={styles.cardDelete} onClick={() => setRabPreviewOpen(false)} title="Tutup" aria-label="Tutup">
-                        <X size={16} />
-                      </button>
-                    </div>
-
-                    {previewRows.length === 0 ? (
-                      <div style={styles.insightEmpty}>Tidak ada kegiatan pada rentang tanggal ini.</div>
-                    ) : (
-                      <div style={styles.rabPreviewTableWrap}>
-                        <table style={styles.rabPreviewTable}>
-                          <thead>
-                            <tr>
-                              <th style={styles.rabPreviewTh}>Tanggal</th>
-                              <th style={styles.rabPreviewTh}>Nama Kegiatan</th>
-                              <th style={styles.rabPreviewTh}>Jenis Kartu</th>
-                              <th style={styles.rabPreviewTh}>Papan</th>
-                              <th style={{ ...styles.rabPreviewTh, textAlign: "right" }}>Estimasi Biaya (Rp)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {previewRows.map((r, i) => (
-                              <tr key={i}>
-                                <td style={styles.rabPreviewTd}>
-                                  {r.Tanggal} {r.Bulan} {r.Tahun}
-                                </td>
-                                <td style={styles.rabPreviewTd}>{r["Nama Kegiatan"]}</td>
-                                <td style={styles.rabPreviewTd}>{r["Jenis Kartu"] || "—"}</td>
-                                <td style={styles.rabPreviewTd}>{r.Papan}</td>
-                                <td style={{ ...styles.rabPreviewTd, textAlign: "right" }}>
-                                  {formatRupiah(r["Estimasi Biaya (Rp)"])}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    {previewRows.length > 0 && (
-                      <div style={styles.annualTotalTab}>
-                        <span style={styles.annualTotalLabel}>Total RAB</span>
-                        <span style={styles.annualTotalValue}>{formatRupiah(previewTotal)}</span>
-                      </div>
-                    )}
-
-                    <div style={styles.rabPreviewActions}>
-                      <button
-                        style={styles.exportRabBtn}
-                        onClick={() => {
-                          exportRabRange();
-                          setRabPreviewOpen(false);
-                        }}
-                      >
-                        <Download size={15} />
-                        Download Spreadsheet
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
         </>
       )}
     </div>
@@ -4685,6 +4636,7 @@ const styles = {
   submitCardBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
   exportRabBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", whiteSpace: "nowrap" },
   previewRabBtn: { border: "1px solid #3B82F6", borderRadius: 6, background: "transparent", color: "#3B82F6", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", whiteSpace: "nowrap" },
+  previewRabBtnActive: { background: "#3B82F6", color: "#fff" },
   rabBtnDisabled: { opacity: 0.45, cursor: "not-allowed" },
   addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "var(--text-faint)", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
   noteWrap: { display: "flex", flexDirection: "column", gap: 6, height: "100%", maxWidth: 720 },
@@ -4819,11 +4771,6 @@ const styles = {
   calendarModeBtnActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
 
   rabExportPanel: { display: "flex", flexDirection: "column", gap: 8, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 14px", marginBottom: 4 },
-  rabPreviewTableWrap: { overflowX: "auto", border: "1px solid var(--card-border)", borderRadius: 8 },
-  rabPreviewTable: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 },
-  rabPreviewTh: { textAlign: "left", padding: "8px 10px", background: "var(--surface-strong)", color: "var(--text-faint)", fontSize: 10.5, letterSpacing: 0.4, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap", borderBottom: "2px solid var(--card-border)" },
-  rabPreviewTd: { padding: "8px 10px", color: "var(--text-primary)", borderBottom: "1px solid var(--card-border)", verticalAlign: "top" },
-  rabPreviewActions: { display: "flex", justifyContent: "flex-end" },
   rabRangeRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
