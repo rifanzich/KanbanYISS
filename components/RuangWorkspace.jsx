@@ -27,6 +27,9 @@ import {
   Star,
   Maximize,
   Minimize,
+  Settings,
+  Trash2,
+  Eye,
 } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
@@ -1223,6 +1226,66 @@ export default function RuangWorkspace() {
     setWsData((d) => (d.cardTypes.includes(trimmed) ? d : { ...d, cardTypes: [...d.cardTypes, trimmed] }));
   };
 
+  // Renaming/deleting a "jenis kartu" touches every card across every board
+  // and every month that currently uses it, not just the master list — so
+  // both walk the full boards/monthly/cards tree and patch matches in place.
+  const renameCardType = (oldName, newName) => {
+    const trimmed = (newName || "").trim();
+    if (!trimmed || trimmed === oldName) return;
+    setWsData((d) => {
+      const mergesIntoExisting = d.cardTypes.includes(trimmed);
+      const nextCardTypes = mergesIntoExisting ? d.cardTypes.filter((t) => t !== oldName) : d.cardTypes.map((t) => (t === oldName ? trimmed : t));
+      const nextBoards = {};
+      for (const [bid, board] of Object.entries(d.boards)) {
+        let boardChanged = false;
+        const nextMonthly = { ...(board.monthly || {}) };
+        for (const [mk, mb] of Object.entries(board.monthly || {})) {
+          let monthChanged = false;
+          const nextCards = { ...mb.cards };
+          for (const [cid, card] of Object.entries(mb.cards)) {
+            if (card.cardType === oldName) {
+              nextCards[cid] = { ...card, cardType: trimmed };
+              monthChanged = true;
+            }
+          }
+          if (monthChanged) {
+            nextMonthly[mk] = { ...mb, cards: nextCards };
+            boardChanged = true;
+          }
+        }
+        nextBoards[bid] = boardChanged ? { ...board, monthly: nextMonthly } : board;
+      }
+      return { ...d, cardTypes: nextCardTypes, boards: nextBoards };
+    });
+  };
+
+  const deleteCardType = (name) => {
+    setWsData((d) => {
+      const nextCardTypes = d.cardTypes.filter((t) => t !== name);
+      const nextBoards = {};
+      for (const [bid, board] of Object.entries(d.boards)) {
+        let boardChanged = false;
+        const nextMonthly = { ...(board.monthly || {}) };
+        for (const [mk, mb] of Object.entries(board.monthly || {})) {
+          let monthChanged = false;
+          const nextCards = { ...mb.cards };
+          for (const [cid, card] of Object.entries(mb.cards)) {
+            if (card.cardType === name) {
+              nextCards[cid] = { ...card, cardType: "" };
+              monthChanged = true;
+            }
+          }
+          if (monthChanged) {
+            nextMonthly[mk] = { ...mb, cards: nextCards };
+            boardChanged = true;
+          }
+        }
+        nextBoards[bid] = boardChanged ? { ...board, monthly: nextMonthly } : board;
+      }
+      return { ...d, cardTypes: nextCardTypes, boards: nextBoards };
+    });
+  };
+
   // ---- Board actions (semua beroperasi pada bulan yang sedang dilihat) ----
   const addBoard = () => {
     const id = uid();
@@ -1790,6 +1853,8 @@ export default function RuangWorkspace() {
             members={availableMembers}
             cardTypes={wsData.cardTypes}
             onAddCardType={addCardType}
+            onRenameCardType={renameCardType}
+            onDeleteCardType={deleteCardType}
             isAdmin={isAdmin}
             currentUsername={currentUser.username}
             onRename={renameBoard}
@@ -1817,6 +1882,8 @@ export default function RuangWorkspace() {
             isAdmin={isAdmin}
             cardTypes={wsData.cardTypes}
             onAddCardType={addCardType}
+            onRenameCardType={renameCardType}
+            onDeleteCardType={deleteCardType}
             onAddNote={addCalendarNote}
             onDeleteNote={deleteCalendarNote}
             onToggleNote={toggleCalendarNote}
@@ -2503,9 +2570,12 @@ function Sidebar({
   );
 }
 
-function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, onRequestConfirm }) {
+function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, onRenameOption, onDeleteOption, onRequestConfirm }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [managing, setManaging] = useState(false);
+  const [editingType, setEditingType] = useState(null);
+  const [editName, setEditName] = useState("");
   const committedQty = qty === undefined || qty === null || qty === "" ? 1 : qty;
   const [qtyDraft, setQtyDraft] = useState(committedQty);
 
@@ -2524,6 +2594,28 @@ function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, o
     }
     setName("");
     setAdding(false);
+  };
+
+  const startEditType = (t) => {
+    setEditingType(t);
+    setEditName(t);
+  };
+
+  const confirmEditType = () => {
+    const trimmed = editName.trim();
+    if (trimmed && trimmed !== editingType && onRenameOption) onRenameOption(editingType, trimmed);
+    setEditingType(null);
+    setEditName("");
+  };
+
+  const requestDeleteType = (t) => {
+    if (!onDeleteOption) return;
+    const doDelete = () => onDeleteOption(t);
+    if (onRequestConfirm) {
+      onRequestConfirm(`Hapus jenis kartu "${t}"? Kartu yang memakainya akan kembali menjadi "Belum ditentukan".`, doDelete, { confirmLabel: "Hapus" });
+    } else {
+      doDelete();
+    }
   };
 
   if (adding) {
@@ -2554,68 +2646,126 @@ function TypeSelect({ value, options, qty, onChange, onQtyChange, onAddOption, o
     );
   }
 
+  const canManage = (onRenameOption || onDeleteOption) && options.length > 0;
+
   return (
-    <div style={styles.typeSelectRow}>
-      <select
-        style={styles.typeSelect}
-        value={value || ""}
-        onChange={(e) => {
-          if (e.target.value === "__add_new__") {
-            setAdding(true);
-            return;
-          }
-          onChange(e.target.value);
-        }}
-      >
-        <option value="">Pilih jenis kartu…</option>
-        {options.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-        <option value="__add_new__">+ Tambah jenis baru…</option>
-      </select>
-      {onQtyChange && (
-        <input
-          type="number"
-          min={1}
-          style={styles.typeQtyInput}
-          value={qtyDraft === "" ? "" : qtyDraft}
-          placeholder="1"
-          title="Jumlah (input manual, tidak terakumulasi dengan kartu lain)"
+    <div style={styles.typeSelectWrap}>
+      <div style={styles.typeSelectRow}>
+        <select
+          style={styles.typeSelect}
+          value={value || ""}
           onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") {
-              setQtyDraft("");
+            if (e.target.value === "__add_new__") {
+              setAdding(true);
               return;
             }
-            const n = parseInt(raw, 10);
-            setQtyDraft(Number.isFinite(n) && n > 0 ? n : 1);
+            onChange(e.target.value);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-          }}
-          onBlur={() => {
-            // Left blank -> silently default to 1, exactly as if the person had typed it.
-            const finalVal = qtyDraft === "" ? 1 : qtyDraft;
-            if (finalVal === committedQty) {
-              setQtyDraft(finalVal);
-              return;
-            }
-            // Editing an already-saved quantity needs an explicit
-            // simpan/batal confirmation. New (not-yet-created) cards don't
-            // get one — nothing's saved yet, so onRequestConfirm is omitted
-            // for that draft row.
-            if (onRequestConfirm) {
-              onRequestConfirm(`Simpan jumlah baru "${finalVal}" untuk kartu ini?`, () => onQtyChange(finalVal), {
-                confirmLabel: "Simpan",
-                onCancel: () => setQtyDraft(committedQty),
-              });
-            } else {
-              onQtyChange(finalVal);
-            }
-          }}
-        />
+        >
+          <option value="">Pilih jenis kartu…</option>
+          {options.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          <option value="__add_new__">+ Tambah jenis baru…</option>
+        </select>
+        {onQtyChange && (
+          <input
+            type="number"
+            min={1}
+            style={styles.typeQtyInput}
+            value={qtyDraft === "" ? "" : qtyDraft}
+            placeholder="1"
+            title="Jumlah (input manual, tidak terakumulasi dengan kartu lain)"
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") {
+                setQtyDraft("");
+                return;
+              }
+              const n = parseInt(raw, 10);
+              setQtyDraft(Number.isFinite(n) && n > 0 ? n : 1);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            onBlur={() => {
+              // Left blank -> silently default to 1, exactly as if the person had typed it.
+              const finalVal = qtyDraft === "" ? 1 : qtyDraft;
+              if (finalVal === committedQty) {
+                setQtyDraft(finalVal);
+                return;
+              }
+              // Editing an already-saved quantity needs an explicit
+              // simpan/batal confirmation. New (not-yet-created) cards don't
+              // get one — nothing's saved yet, so onRequestConfirm is omitted
+              // for that draft row.
+              if (onRequestConfirm) {
+                onRequestConfirm(`Simpan jumlah baru "${finalVal}" untuk kartu ini?`, () => onQtyChange(finalVal), {
+                  confirmLabel: "Simpan",
+                  onCancel: () => setQtyDraft(committedQty),
+                });
+              } else {
+                onQtyChange(finalVal);
+              }
+            }}
+          />
+        )}
+        {canManage && (
+          <button
+            type="button"
+            style={{ ...styles.manageTypesBtn, ...(managing ? styles.manageTypesBtnActive : {}) }}
+            onClick={() => setManaging((v) => !v)}
+            title="Kelola jenis kartu"
+            aria-label="Kelola jenis kartu"
+          >
+            <Settings size={13} />
+          </button>
+        )}
+      </div>
+
+      {managing && canManage && (
+        <div style={styles.manageTypesPanel}>
+          <div style={styles.manageTypesTitle}>Kelola Jenis Kartu</div>
+          <div style={styles.manageTypesList}>
+            {options.map((t) => (
+              <div key={t} style={styles.manageTypeRow}>
+                {editingType === t ? (
+                  <>
+                    <input
+                      style={styles.manageTypeInput}
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && confirmEditType()}
+                      autoFocus
+                    />
+                    <button style={styles.addTypeConfirmBtn} onClick={confirmEditType} title="Simpan">
+                      <Check size={12} />
+                    </button>
+                    <button style={styles.addTypeCancelBtn} onClick={() => setEditingType(null)} title="Batal">
+                      <X size={12} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span style={styles.manageTypeName}>{t}</span>
+                    {onRenameOption && (
+                      <button style={styles.manageTypeIconBtn} onClick={() => startEditType(t)} title="Ubah nama">
+                        <Pencil size={12} />
+                      </button>
+                    )}
+                    {onDeleteOption && (
+                      <button style={styles.manageTypeIconBtnDanger} onClick={() => requestDeleteType(t)} title="Hapus jenis ini">
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2769,7 +2919,7 @@ function CardTitle({ text, checked, priority, fromCalendar, checkboxDisabled, on
   );
 }
 
-function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard }) {
+function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
   // Papan bulanan: setiap bulan punya kolom & kartunya sendiri. Dibuka
@@ -2925,6 +3075,8 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                       onChange={(v) => onUpdateCard(board.id, viewMonth, cid, { cardType: v })}
                       onQtyChange={(v) => onUpdateCard(board.id, viewMonth, cid, { qty: v === "" ? "" : Number(v) })}
                       onAddOption={onAddCardType}
+                      onRenameOption={onRenameCardType}
+                      onDeleteOption={onDeleteCardType}
                       onRequestConfirm={onRequestConfirm}
                     />
 
@@ -2983,6 +3135,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, isAdmin, currentU
                   onChange={(v) => setDraft(col.id, { cardType: v })}
                   onQtyChange={(v) => setDraft(col.id, { qty: v })}
                   onAddOption={onAddCardType}
+                  onRenameOption={onRenameCardType}
+                  onDeleteOption={onDeleteCardType}
+                  onRequestConfirm={onRequestConfirm}
                 />
 
                 {isAdmin ? (
@@ -3390,7 +3545,7 @@ const WEEKDAY_LABELS_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 // tanggal untuk menambah kartu — bentuknya sama seperti menambah kartu di
 // papan (jenis, jumlah, tim terlibat, durasi, kolom tujuan), dan otomatis
 // tersinkron ke papan yang dipilih pada bulan sesuai tanggalnya.
-function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, onAddCardType, onAddNote, onDeleteNote, onToggleNote, onRequestConfirm }) {
+function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, onAddNote, onDeleteNote, onToggleNote, onRequestConfirm }) {
   const boardOrder = wsData.boardOrder || [];
   const [viewMode, setViewMode] = useState("month"); // "month" | "annual"
   const [viewMonth, setViewMonth] = useState(() => currentMonthKey());
@@ -3399,6 +3554,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   const [dialogOpen, setDialogOpen] = useState(false); // dipakai khusus mode Rencana Tahunan
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
+  const [rabPreviewOpen, setRabPreviewOpen] = useState(false);
   const [selectedBoardId, setSelectedBoardId] = useState(boardOrder[0] || "");
   const [draft, setDraft] = useState({ text: "", cardType: "", qty: 1, colId: "", involvedMembers: [], amount: "", unit: "hari", rab: "" });
 
@@ -3463,11 +3619,9 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   };
 
   // Ekspor RAB (Rencana Anggaran Biaya): kumpulkan semua kartu kalender dalam
-  // rentang tanggal yang dipilih, lalu unduh sebagai spreadsheet.
-  const exportRabRange = () => {
-    if (!rangeStart || !rangeEnd) return;
-    const start = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
-    const end = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+  // rentang tanggal yang dipilih. Dipakai bersama oleh tombol Download
+  // (unduh spreadsheet) dan tombol Preview (lihat dulu sebelum diunduh).
+  const computeRabRangeRows = (start, end) => {
     const rows = [];
     Object.keys(wsData.calendarNotes || {})
       .filter((dateStr) => dateStr >= start && dateStr <= end)
@@ -3490,6 +3644,21 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           });
         });
       });
+    return rows;
+  };
+
+  const normalizedRange = () => {
+    if (!rangeStart || !rangeEnd) return null;
+    const start = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
+    const end = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+    return { start, end };
+  };
+
+  const exportRabRange = () => {
+    const range = normalizedRange();
+    if (!range) return;
+    const { start, end } = range;
+    const rows = computeRabRangeRows(start, end);
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(
       rows.length ? rows : [{ Tanggal: "", Bulan: "", Tahun: "", "Nama Kegiatan": "(tidak ada kegiatan pada rentang ini)", "Jenis Kartu": "", Papan: "", "Estimasi Biaya (Rp)": "" }]
@@ -3624,6 +3793,9 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
             onChange={(v) => setDraft((d) => ({ ...d, cardType: v }))}
             onQtyChange={(v) => setDraft((d) => ({ ...d, qty: v === "" ? "" : Number(v) }))}
             onAddOption={onAddCardType}
+            onRenameOption={onRenameCardType}
+            onDeleteOption={onDeleteCardType}
+            onRequestConfirm={onRequestConfirm}
           />
 
           {isAdmin ? (
@@ -3818,9 +3990,25 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               <input type="date" style={styles.startDateInput} value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} title="Dari tanggal" />
               <span style={styles.durationHint}>sampai</span>
               <input type="date" style={styles.startDateInput} value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} title="Sampai tanggal" />
-              <button style={styles.exportRabBtn} onClick={exportRabRange} disabled={!rangeStart || !rangeEnd} title="Ekspor RAB ke spreadsheet" aria-label="Ekspor RAB ke spreadsheet">
+              <button
+                style={{ ...styles.exportRabBtn, ...(!rangeStart || !rangeEnd ? styles.rabBtnDisabled : {}) }}
+                onClick={exportRabRange}
+                disabled={!rangeStart || !rangeEnd}
+                title="Ekspor RAB ke spreadsheet"
+                aria-label="Ekspor RAB ke spreadsheet"
+              >
                 <Download size={15} />
                 Download Spreadsheet
+              </button>
+              <button
+                style={{ ...styles.previewRabBtn, ...(!rangeStart || !rangeEnd ? styles.rabBtnDisabled : {}) }}
+                onClick={() => setRabPreviewOpen(true)}
+                disabled={!rangeStart || !rangeEnd}
+                title="Lihat pratinjau sebelum diunduh"
+                aria-label="Preview"
+              >
+                <Eye size={15} />
+                Preview
               </button>
             </div>
           </div>
@@ -3842,6 +4030,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                       const notes = notesByDate[dateStr] || [];
                       const isToday = dateStr === todayStr;
                       const isWeekend = i % 7 === 5 || i % 7 === 6;
+                      const isSelected = dateStr === selectedDate;
                       return (
                         <div
                           key={dateStr}
@@ -3851,6 +4040,7 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
                             ...(isWeekend ? styles.annualDayCellWeekend : {}),
                             ...(isToday ? styles.calendarDayCellToday : {}),
                             ...(notes.length ? styles.annualDayCellHasNotes : {}),
+                            ...(isSelected ? styles.annualDayCellSelected : styles.annualDayCellDim),
                           }}
                           onClick={() => {
                             setSelectedDate(dateStr);
@@ -3925,6 +4115,80 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
               </div>
             </div>
           )}
+
+          {rabPreviewOpen &&
+            (() => {
+              const range = normalizedRange();
+              const previewRows = range ? computeRabRangeRows(range.start, range.end) : [];
+              const previewTotal = previewRows.reduce((sum, r) => sum + (Number(r["Estimasi Biaya (Rp)"]) || 0), 0);
+              return (
+                <div style={styles.modalBackdrop} onClick={() => setRabPreviewOpen(false)}>
+                  <div style={{ ...styles.modalBox, maxWidth: 760, maxHeight: "85vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.calendarDialogHeadRow}>
+                      <div style={styles.calendarPanelTitle}>
+                        Preview RAB {range ? `— ${range.start} s/d ${range.end}` : ""}
+                      </div>
+                      <button style={styles.cardDelete} onClick={() => setRabPreviewOpen(false)} title="Tutup" aria-label="Tutup">
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    {previewRows.length === 0 ? (
+                      <div style={styles.insightEmpty}>Tidak ada kegiatan pada rentang tanggal ini.</div>
+                    ) : (
+                      <div style={styles.rabPreviewTableWrap}>
+                        <table style={styles.rabPreviewTable}>
+                          <thead>
+                            <tr>
+                              <th style={styles.rabPreviewTh}>Tanggal</th>
+                              <th style={styles.rabPreviewTh}>Nama Kegiatan</th>
+                              <th style={styles.rabPreviewTh}>Jenis Kartu</th>
+                              <th style={styles.rabPreviewTh}>Papan</th>
+                              <th style={{ ...styles.rabPreviewTh, textAlign: "right" }}>Estimasi Biaya (Rp)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {previewRows.map((r, i) => (
+                              <tr key={i}>
+                                <td style={styles.rabPreviewTd}>
+                                  {r.Tanggal} {r.Bulan} {r.Tahun}
+                                </td>
+                                <td style={styles.rabPreviewTd}>{r["Nama Kegiatan"]}</td>
+                                <td style={styles.rabPreviewTd}>{r["Jenis Kartu"] || "—"}</td>
+                                <td style={styles.rabPreviewTd}>{r.Papan}</td>
+                                <td style={{ ...styles.rabPreviewTd, textAlign: "right" }}>
+                                  {formatRupiah(r["Estimasi Biaya (Rp)"])}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {previewRows.length > 0 && (
+                      <div style={styles.annualTotalTab}>
+                        <span style={styles.annualTotalLabel}>Total RAB</span>
+                        <span style={styles.annualTotalValue}>{formatRupiah(previewTotal)}</span>
+                      </div>
+                    )}
+
+                    <div style={styles.rabPreviewActions}>
+                      <button
+                        style={styles.exportRabBtn}
+                        onClick={() => {
+                          exportRabRange();
+                          setRabPreviewOpen(false);
+                        }}
+                      >
+                        <Download size={15} />
+                        Download Spreadsheet
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
         </>
       )}
     </div>
@@ -4379,10 +4643,21 @@ const styles = {
   cardPriorityBtn: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
   cardPriorityBtnActive: { color: "#EF4444" },
   cardDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" },
+  typeSelectWrap: { display: "flex", flexDirection: "column", gap: 6 },
   typeSelectRow: { display: "flex", alignItems: "center", gap: 6 },
   typeSelect: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", fontSize: 11.5, color: "var(--text-muted)", outline: "none", padding: "4px 6px", fontFamily: "'Inter', system-ui, sans-serif", flex: 1, minWidth: 0, boxSizing: "border-box" },
   typeCountBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: "#fff", background: "#3B82F6", borderRadius: 10, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 },
   typeQtyInput: { width: 40, border: "1px solid var(--card-border)", borderRadius: 5, background: "var(--input-bg)", fontSize: 11.5, color: "var(--text-primary)", outline: "none", padding: "4px 4px", textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0, boxSizing: "border-box" },
+  manageTypesBtn: { border: "1px solid var(--card-border)", borderRadius: 5, background: "transparent", color: "var(--text-faint)", padding: "4px 6px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  manageTypesBtnActive: { background: "var(--input-bg)", color: "var(--text-primary)", borderColor: "var(--text-faint)" },
+  manageTypesPanel: { border: "1px solid var(--card-border)", borderRadius: 8, background: "var(--input-bg)", padding: 8, display: "flex", flexDirection: "column", gap: 6 },
+  manageTypesTitle: { fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "var(--text-faint)" },
+  manageTypesList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto" },
+  manageTypeRow: { display: "flex", alignItems: "center", gap: 6 },
+  manageTypeName: { flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  manageTypeInput: { flex: 1, minWidth: 0, border: "1px dashed var(--input-border)", borderRadius: 5, padding: "4px 6px", fontSize: 12, outline: "none", boxSizing: "border-box", color: "var(--text-primary)", background: "var(--input-bg)" },
+  manageTypeIconBtn: { border: "none", borderRadius: 5, background: "transparent", color: "var(--text-faint)", padding: 4, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 },
+  manageTypeIconBtnDanger: { border: "none", borderRadius: 5, background: "transparent", color: "#EF4444", padding: 4, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 },
   assigneeReadonly: { fontSize: 11.5, color: "var(--text-muted)", padding: "4px 2px", fontStyle: "italic" },
   assigneeReadonlyHint: { fontSize: 10.5, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.4 },
   createdDateLabel: { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-faint)" },
@@ -4409,6 +4684,8 @@ const styles = {
   durationHint: { fontSize: 10, color: "var(--text-faint)", alignSelf: "center", fontStyle: "italic" },
   submitCardBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" },
   exportRabBtn: { border: "none", borderRadius: 6, background: "#3B82F6", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", whiteSpace: "nowrap" },
+  previewRabBtn: { border: "1px solid #3B82F6", borderRadius: 6, background: "transparent", color: "#3B82F6", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", whiteSpace: "nowrap" },
+  rabBtnDisabled: { opacity: 0.45, cursor: "not-allowed" },
   addColumnBtn: { minWidth: 140, height: 44, border: "1px dashed #C7C3B6", background: "transparent", borderRadius: 8, color: "var(--text-faint)", fontSize: 13, cursor: "pointer", alignSelf: "flex-start", flexShrink: 0 },
   noteWrap: { display: "flex", flexDirection: "column", gap: 6, height: "100%", maxWidth: 720 },
   noteTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontSize: 26, fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)" },
@@ -4542,6 +4819,11 @@ const styles = {
   calendarModeBtnActive: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff" },
 
   rabExportPanel: { display: "flex", flexDirection: "column", gap: 8, background: "var(--surface-solid)", border: "1px solid var(--card-border)", borderRadius: 10, padding: "12px 14px", marginBottom: 4 },
+  rabPreviewTableWrap: { overflowX: "auto", border: "1px solid var(--card-border)", borderRadius: 8 },
+  rabPreviewTable: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 },
+  rabPreviewTh: { textAlign: "left", padding: "8px 10px", background: "var(--surface-strong)", color: "var(--text-faint)", fontSize: 10.5, letterSpacing: 0.4, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap", borderBottom: "2px solid var(--card-border)" },
+  rabPreviewTd: { padding: "8px 10px", color: "var(--text-primary)", borderBottom: "1px solid var(--card-border)", verticalAlign: "top" },
+  rabPreviewActions: { display: "flex", justifyContent: "flex-end" },
   rabRangeRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   rabInputRow: { display: "flex", alignItems: "center", gap: 8 },
 
@@ -4549,21 +4831,16 @@ const styles = {
   monthMainCol: { flex: "1 1 480px", minWidth: 0, display: "flex", flexDirection: "column", gap: 14 },
   annualLayoutRow: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", width: "100%" },
   annualSummaryCol: {
-    flex: "1 1 300px",
-    minWidth: 260,
-    maxWidth: 380,
+    flex: "1 1 380px",
+    minWidth: 300,
+    maxWidth: 720,
     display: "flex",
     flexDirection: "column",
     gap: 10,
-    position: "sticky",
-    top: 20,
-    maxHeight: "calc(100vh - 40px)",
   },
   annualSummaryPanel: {
     display: "flex",
     flexDirection: "column",
-    flex: 1,
-    minHeight: 0,
     background: "var(--surface-solid)",
     border: "1px solid var(--card-border)",
     borderRadius: 10,
@@ -4593,7 +4870,7 @@ const styles = {
     background: "#8a7a52",
     padding: "10px 14px",
   },
-  annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px", flex: 1, minHeight: 0 },
+  annualSummaryTable: { display: "flex", flexDirection: "column", padding: "0 14px 10px" },
   annualSummaryHeadRow: {
     flexShrink: 0,
     display: "flex",
@@ -4606,8 +4883,8 @@ const styles = {
     textTransform: "uppercase",
     color: "var(--text-faint)",
   },
-  annualSummaryList: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflowY: "auto" },
-  annualSummaryRow: { display: "flex", gap: 8, padding: "6px 4px", borderBottom: "1px solid var(--card-border)", cursor: "pointer", alignItems: "baseline" },
+  annualSummaryList: { columnWidth: 300, columnGap: 20 },
+  annualSummaryRow: { display: "flex", gap: 8, padding: "6px 4px", borderBottom: "1px solid var(--card-border)", cursor: "pointer", alignItems: "baseline", breakInside: "avoid", WebkitColumnBreakInside: "avoid" },
   annualSummaryItemActive: { background: "rgba(59,130,246,0.15)" },
   annualSummaryColNo: { flex: "0 0 22px", fontSize: 11, color: "var(--text-faint)" },
   annualSummaryColDate: { flex: "0 0 92px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "var(--text-muted)" },
@@ -4630,6 +4907,8 @@ const styles = {
     border: "1px solid transparent",
   },
   annualDayCellHasNotes: { background: "#1e3a66", color: "#fff", fontWeight: 700, border: "1px solid #3a6ea5" },
+  annualDayCellSelected: { background: "#3B82F6", borderColor: "#3B82F6", color: "#fff", fontWeight: 700, opacity: 1, boxShadow: "0 0 0 3px rgba(59,130,246,0.35)", transition: "none" },
+  annualDayCellDim: { opacity: 0.4 },
   annualDayCellWeekend: { color: "#EF4444" },
   annualDayBadge: {
     position: "absolute",
