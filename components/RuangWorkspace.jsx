@@ -3621,6 +3621,8 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
   // Ekspor RAB (Rencana Anggaran Biaya): kumpulkan semua kartu kalender dalam
   // rentang tanggal yang dipilih. Dipakai bersama oleh tombol Download
   // (unduh spreadsheet) dan tombol Preview (lihat dulu sebelum diunduh).
+  const formatRupiahSpaced = (n) => `Rp ${Number(n || 0).toLocaleString("id-ID")}`;
+
   const computeRabRangeRows = (start, end) => {
     const rows = [];
     Object.keys(wsData.calendarNotes || {})
@@ -3634,13 +3636,9 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
           const loc = findCardLocation(board, note.monthKey, note.cardId);
           if (!loc) return;
           rows.push({
-            Tanggal: d,
-            Bulan: MONTH_NAMES_ID[m - 1],
-            Tahun: y,
-            "Nama Kegiatan": loc.card.text,
-            "Jenis Kartu": loc.card.cardType || "",
-            Papan: board.name,
-            "Estimasi Biaya (Rp)": loc.card.rab || 0,
+            tanggal: `${d} ${MONTH_NAMES_ID[m - 1]} ${y}`,
+            uraian: loc.card.text,
+            rab: loc.card.rab || 0,
           });
         });
       });
@@ -3669,13 +3667,20 @@ function CalendarView({ wsData, currentUsername, members, isAdmin, cardTypes, on
     const { start, end } = range;
     const rows = computeRabRangeRows(start, end);
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(
-      rows.length ? rows : [{ Tanggal: "", Bulan: "", Tahun: "", "Nama Kegiatan": "(tidak ada kegiatan pada rentang ini)", "Jenis Kartu": "", Papan: "", "Estimasi Biaya (Rp)": "" }]
-    );
+
+    const aoa = [["No.", "Tanggal", "Uraian Kegiatan", "Estimasi Biaya"]];
     if (rows.length) {
-      const total = rows.reduce((sum, r) => sum + (Number(r["Estimasi Biaya (Rp)"]) || 0), 0);
-      XLSX.utils.sheet_add_json(ws, [{ "Nama Kegiatan": "TOTAL", "Estimasi Biaya (Rp)": total }], { skipHeader: true, origin: -1 });
+      rows.forEach((r, idx) => {
+        aoa.push([idx + 1, r.tanggal, r.uraian, formatRupiahSpaced(r.rab)]);
+      });
+      const total = rows.reduce((sum, r) => sum + (Number(r.rab) || 0), 0);
+      aoa.push(["", "", "Total", formatRupiahSpaced(total)]);
+    } else {
+      aoa.push(["", "", "(tidak ada kegiatan pada rentang ini)", ""]);
     }
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 5 }, { wch: 20 }, { wch: 45 }, { wch: 18 }];
     XLSX.utils.book_append_sheet(wb, ws, "RAB");
     XLSX.writeFile(wb, `rab-${start}_sd_${end}.xlsx`);
   };
