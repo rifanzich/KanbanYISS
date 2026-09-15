@@ -2072,32 +2072,40 @@ function Sidebar({
   onGoToUrgentCard,
 }) {
   const notifPanel = showNotifPanel && (
-    <div style={{ ...styles.notifPanel, left: collapsed ? 74 : 14 }}>
-      <div style={styles.notifTitle}>Notifikasi Tenggat</div>
-      {urgentCount === 0 && <div style={styles.notifEmpty}>Tidak ada kartu yang mendekati atau melewati tenggat.</div>}
-      {overdue.length > 0 && (
-        <div style={styles.notifGroup}>
-          <div style={styles.notifGroupLabelOverdue}>Terlambat</div>
-          {overdue.map((it, i) => (
-            <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
-              <div style={styles.notifItemText}>{it.cardText}</div>
-              <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
-            </div>
-          ))}
+    <>
+      <div style={styles.notifBackdrop} onClick={onToggleNotifPanel} />
+      <div style={{ ...styles.notifPanel, left: collapsed ? 74 : 14 }} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.calendarDialogHeadRow}>
+          <div style={styles.notifTitle}>Notifikasi Tenggat</div>
+          <button style={styles.cardDelete} onClick={onToggleNotifPanel} title="Tutup" aria-label="Tutup notifikasi">
+            <X size={15} />
+          </button>
         </div>
-      )}
-      {dueSoon.length > 0 && (
-        <div style={styles.notifGroup}>
-          <div style={styles.notifGroupLabelSoon}>Mendekati tenggat (&lt; 12 jam)</div>
-          {dueSoon.map((it, i) => (
-            <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
-              <div style={styles.notifItemText}>{it.cardText}</div>
-              <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+        {urgentCount === 0 && <div style={styles.notifEmpty}>Tidak ada kartu yang mendekati atau melewati tenggat.</div>}
+        {overdue.length > 0 && (
+          <div style={styles.notifGroup}>
+            <div style={styles.notifGroupLabelOverdue}>Terlambat</div>
+            {overdue.map((it, i) => (
+              <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
+                <div style={styles.notifItemText}>{it.cardText}</div>
+                <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {dueSoon.length > 0 && (
+          <div style={styles.notifGroup}>
+            <div style={styles.notifGroupLabelSoon}>Mendekati tenggat (&lt; 12 jam)</div>
+            {dueSoon.map((it, i) => (
+              <div key={i} style={styles.notifItem} onClick={() => onGoToUrgentCard(it)}>
+                <div style={styles.notifItemText}>{it.cardText}</div>
+                <div style={styles.notifItemMeta}>{it.boardName} · {it.columnName} · {it.text}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 
   if (collapsed) {
@@ -3210,24 +3218,25 @@ function computeMonthInsight(wsData, monthKey, typeFilter) {
       col.cardIds.forEach((cid) => {
         const card = mb.cards[cid];
         if (!card) return;
-        if (idx === 0) todo += 1;
-        else if (idx === 1) inProgress += 1;
-        else if (idx === 2) done += 1;
+        const qty = Number(card.qty) > 0 ? Number(card.qty) : 1;
+        if (idx === 0) todo += qty;
+        else if (idx === 1) inProgress += qty;
+        else if (idx === 2) done += qty;
 
         const type = card.cardType || "Belum ditentukan";
         if (!typeStats[type]) typeStats[type] = { todo: 0, inProgress: 0, done: 0, total: 0 };
-        typeStats[type].total += 1;
-        if (idx === 0) typeStats[type].todo += 1;
-        else if (idx === 1) typeStats[type].inProgress += 1;
-        else if (idx === 2) typeStats[type].done += 1;
+        typeStats[type].total += qty;
+        if (idx === 0) typeStats[type].todo += qty;
+        else if (idx === 1) typeStats[type].inProgress += qty;
+        else if (idx === 2) typeStats[type].done += qty;
 
         if (idx === 1 || idx === 2) {
           if (typeFilter !== "__all__" && type !== typeFilter) return;
           const involved = card.involvedMembers && card.involvedMembers.length ? card.involvedMembers : [];
           involved.forEach((name) => {
             if (!memberStats[name]) memberStats[name] = { done: 0, inProgress: 0 };
-            if (idx === 2) memberStats[name].done += 1;
-            else memberStats[name].inProgress += 1;
+            if (idx === 2) memberStats[name].done += qty;
+            else memberStats[name].inProgress += qty;
           });
         }
       });
@@ -3239,7 +3248,8 @@ function computeMonthInsight(wsData, monthKey, typeFilter) {
 
 // Total kartu for one metric ("__all__" = seluruh jenis, or a specific jenis
 // kartu) within one month, across every board — this is what the comparison
-// chart plots per month.
+// chart plots per month. Weighted by each card's manual qty (jumlah), not a
+// flat 1 per card.
 function countMonthMetric(wsData, monthKey, metric) {
   let count = 0;
   wsData.boardOrder.forEach((bid) => {
@@ -3250,8 +3260,9 @@ function countMonthMetric(wsData, monthKey, metric) {
       col.cardIds.forEach((cid) => {
         const card = mb.cards[cid];
         if (!card) return;
+        const qty = Number(card.qty) > 0 ? Number(card.qty) : 1;
         const type = card.cardType || "Belum ditentukan";
-        if (metric === "__all__" || type === metric) count += 1;
+        if (metric === "__all__" || type === metric) count += qty;
       });
     });
   });
@@ -4715,7 +4726,8 @@ const styles = {
   bellBtn: { position: "relative", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.08)", color: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
   fullscreenBtn: { position: "fixed", top: 14, right: 14, width: 42, height: 42, borderRadius: "50%", background: "#111111", color: "#fff", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 50 },
   bellBadge: { position: "absolute", top: -3, right: -3, background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
-  notifPanel: { position: "fixed", top: 64, width: 280, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 60, display: "flex", flexDirection: "column", gap: 10 },
+  notifBackdrop: { position: "fixed", inset: 0, zIndex: 59, background: "transparent" },
+  notifPanel: { position: "fixed", top: 64, width: 280, maxHeight: 380, overflowY: "auto", background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 61, display: "flex", flexDirection: "column", gap: 10 },
   notifTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
   notifEmpty: { fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" },
   notifGroup: { display: "flex", flexDirection: "column", gap: 5 },
