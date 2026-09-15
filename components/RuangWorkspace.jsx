@@ -2124,7 +2124,7 @@ function Sidebar({
           </button>
           <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, position: "relative" }} onClick={onToggleNotifPanel} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
             <Bell size={16} />
-            {urgentCount > 0 && <span style={styles.bellBadge}>{urgentCount}</span>}
+            {urgentCount > 0 && !showNotifPanel && <span style={styles.bellBadge}>{urgentCount}</span>}
           </button>
           <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectInsight} title="Insight">
             <PieChart size={17} />
@@ -2217,7 +2217,7 @@ function Sidebar({
           )}
           <button style={styles.bellBtn} onClick={onToggleNotifPanel} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
             <Bell size={15} />
-            {urgentCount > 0 && <span style={styles.bellBadge}>{urgentCount}</span>}
+            {urgentCount > 0 && !showNotifPanel && <span style={styles.bellBadge}>{urgentCount}</span>}
           </button>
           <button style={styles.logoutBtn} onClick={onToggleTheme} title={theme === "light" ? "Mode gelap" : "Mode terang"}>
             {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
