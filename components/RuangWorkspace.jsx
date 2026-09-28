@@ -30,6 +30,7 @@ import {
   Settings,
   Trash2,
   Eye,
+  Search,
 } from "lucide-react";
 
 // Install a window.storage shim that forwards to the Next.js API routes
@@ -185,6 +186,16 @@ function defaultColumnsTemplate(seed) {
 // about the same never-visited month sees the exact same column ids, instead
 // of a fresh random set each time (which would break renaming/moving/adding
 // before that month has been "touched" for the first time).
+// Cocokkan kartu dengan kata kunci pencarian: nama kartu, jenis kartu, atau
+// anggota terlibat (tanpa membedakan huruf besar/kecil).
+function cardMatchesQuery(card, query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  if ((card.text || "").toLowerCase().includes(q)) return true;
+  if ((card.cardType || "").toLowerCase().includes(q)) return true;
+  return (card.involvedMembers || []).some((m) => (m || "").toLowerCase().includes(q));
+}
+
 function getMonthBoard(board, monthKey) {
   if (board.monthly && board.monthly[monthKey]) return board.monthly[monthKey];
   return { columns: defaultColumnsTemplate(monthKey), cards: {} };
@@ -2938,6 +2949,25 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
   const thisMonthKey = currentMonthKey();
   const { year: viewYear } = parseMonthKey(viewMonth);
 
+  // Pencarian kartu: menyaring kartu di bulan yang sedang dilihat, dan
+  // menunjukkan bulan lain yang juga punya kartu cocok supaya bisa dilompati.
+  const [searchQuery, setSearchQuery] = useState("");
+  const searching = searchQuery.trim().length > 0;
+  const otherMonthMatches = searching
+    ? Object.keys(board.monthly || {})
+        .filter((mk) => mk !== viewMonth)
+        .sort()
+        .map((mk) => {
+          const mb = board.monthly[mk];
+          const cards = mb && mb.cards ? Object.values(mb.cards) : [];
+          return { key: mk, count: cards.filter((cd) => cardMatchesQuery(cd, searchQuery)).length };
+        })
+        .filter((m) => m.count > 0)
+    : [];
+  const totalMatchesThisMonth = searching
+    ? monthBoard.columns.reduce((sum, col) => sum + col.cardIds.filter((id) => monthBoard.cards[id] && cardMatchesQuery(monthBoard.cards[id], searchQuery)).length, 0)
+    : 0;
+
   const draft = (colId) => drafts[colId] || { text: "", amount: "", unit: "hari", involvedMembers: [], cardType: "", qty: 1, startDate: "" };
   const setDraft = (colId, patch) => setDrafts((d) => ({ ...d, [colId]: { ...draft(colId), ...patch } }));
 
@@ -2998,6 +3028,43 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
         <span style={styles.monthTabLabel}>{monthKeyLabel(viewMonth)}</span>
       </div>
 
+      <div style={styles.searchWrap}>
+        <div style={styles.searchBox}>
+          <Search size={15} style={styles.searchIcon} />
+          <input
+            style={styles.searchInput}
+            type="text"
+            placeholder="Cari kartu (nama, jenis, atau anggota)…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setSearchQuery("")}
+            aria-label="Cari kartu"
+          />
+          {searching && (
+            <button style={styles.searchClearBtn} onClick={() => setSearchQuery("")} title="Hapus pencarian" aria-label="Hapus pencarian">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        {searching && (
+          <div style={styles.searchMeta}>
+            <span>
+              {totalMatchesThisMonth} kartu cocok di {monthKeyLabel(viewMonth)}
+            </span>
+            {otherMonthMatches.length > 0 && (
+              <span style={styles.searchOtherMonths}>
+                · juga ada di:
+                {otherMonthMatches.map((m) => (
+                  <button key={m.key} style={styles.searchMonthChip} onClick={() => setViewMonth(m.key)} title={`Buka ${monthKeyLabel(m.key)}`}>
+                    {monthKeyLabel(m.key)} ({m.count})
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="rw-columns-row" style={styles.columnsRow}>
         {monthBoard.columns.map((col, colIndex) => (
           <div
@@ -3021,7 +3088,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
             <div style={styles.columnHead}>
               <span style={{ ...styles.columnDot, background: columnDotColor(colIndex) }} />
               <input style={styles.columnTitle} value={col.name} onChange={(e) => onRenameColumn(board.id, viewMonth, col.id, e.target.value)} />
-              <span style={{ ...styles.columnCountBadge, color: columnDotColor(colIndex) }}>{col.cardIds.length}</span>
+              <span style={{ ...styles.columnCountBadge, color: columnDotColor(colIndex) }}>{searching ? `${col.cardIds.filter((id) => monthBoard.cards[id] && cardMatchesQuery(monthBoard.cards[id], searchQuery)).length}/${col.cardIds.length}` : col.cardIds.length}</span>
               <button
                 style={styles.columnDelete}
                 onClick={() => {
@@ -3036,6 +3103,7 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
               {col.cardIds.map((cid) => {
                 const card = monthBoard.cards[cid];
                 if (!card) return null;
+                if (searching && !cardMatchesQuery(card, searchQuery)) return null;
                 const info = getDurationInfo(card);
                 const involved = card.involvedMembers || [];
                 const accentColor = info ? (info.status === "overdue" ? "#EF4444" : info.status === "due_soon" ? "#F59E0B" : "#10B981") : "transparent";
@@ -4577,6 +4645,14 @@ const styles = {
   emptyText: { fontSize: 14, maxWidth: 340 },
   boardWrap: { display: "flex", flexDirection: "column", gap: 14, height: "100%" },
   boardTitle: { fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "-0.02em", fontWeight: 600, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", padding: "2px 0", width: "100%", boxSizing: "border-box" },
+  searchWrap: { display: "flex", flexDirection: "column", gap: 6 },
+  searchBox: { position: "relative", display: "flex", alignItems: "center", maxWidth: 420 },
+  searchIcon: { position: "absolute", left: 11, color: "var(--text-faint)", pointerEvents: "none" },
+  searchInput: { width: "100%", boxSizing: "border-box", padding: "9px 34px 9px 34px", borderRadius: 10, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--text-primary)", fontSize: 13, outline: "none", fontFamily: "'Inter', system-ui, sans-serif" },
+  searchClearBtn: { position: "absolute", right: 8, background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center", padding: 2 },
+  searchMeta: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" },
+  searchOtherMonths: { display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  searchMonthChip: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-primary)", borderRadius: 12, padding: "2px 9px", fontSize: 11, cursor: "pointer" },
   monthTabRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   monthNavBtn: { border: "1px solid var(--card-border)", background: "var(--surface-solid)", color: "var(--text-muted)", borderRadius: 6, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 15, flexShrink: 0 },
   monthTabScroll: { display: "flex", gap: 4, overflowX: "auto", flex: 1, minWidth: 0 },
