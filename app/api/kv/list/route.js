@@ -5,11 +5,14 @@ import { errorMessage } from "../../../../lib/apiError";
 
 export async function GET(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user) return NextResponse.json({ error: "Belum login." }, { status: 401 });
     const { searchParams } = new URL(request.url);
     const prefix = searchParams.get("prefix") || "";
     const shared = searchParams.get("shared") === "true";
+    if (shared && user.role === "submitter") {
+      return NextResponse.json({ error: "Akun submitter tidak punya akses ke ruang kerja tim." }, { status: 403 });
+    }
     const keys = await storageListKeys(prefix, shared, user.username);
     return NextResponse.json({ keys, prefix });
   } catch (err) {

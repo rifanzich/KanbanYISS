@@ -5,12 +5,15 @@ import { errorMessage } from "../../../lib/apiError";
 
 export async function GET(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user) return NextResponse.json({ error: "Belum login." }, { status: 401 });
     const { searchParams } = new URL(request.url);
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && user.role === "submitter") {
+      return NextResponse.json({ error: "Akun submitter tidak punya akses ke ruang kerja tim." }, { status: 403 });
+    }
     if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }
@@ -26,11 +29,14 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user) return NextResponse.json({ error: "Belum login." }, { status: 401 });
     const body = await request.json().catch(() => ({}));
     const { key, value, shared } = body;
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && user.role === "submitter") {
+      return NextResponse.json({ error: "Akun submitter tidak punya akses ke ruang kerja tim." }, { status: 403 });
+    }
     if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }
@@ -43,12 +49,15 @@ export async function POST(request) {
 
 export async function DELETE(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user) return NextResponse.json({ error: "Belum login." }, { status: 401 });
     const { searchParams } = new URL(request.url);
     const key = searchParams.get("key");
     const shared = searchParams.get("shared") === "true";
     if (!key) return NextResponse.json({ error: "key wajib diisi." }, { status: 400 });
+    if (shared && user.role === "submitter") {
+      return NextResponse.json({ error: "Akun submitter tidak punya akses ke ruang kerja tim." }, { status: 403 });
+    }
     if (shared && !(await canAccessSharedKey(key, user))) {
       return NextResponse.json({ error: "Kamu belum terdaftar sebagai anggota ruang tim ini." }, { status: 403 });
     }

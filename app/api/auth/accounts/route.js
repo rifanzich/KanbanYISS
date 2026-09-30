@@ -3,10 +3,11 @@ import bcrypt from "bcryptjs";
 import { getSessionUser } from "../../../../lib/auth";
 import { listAccounts, getAccount, saveAccount } from "../../../../lib/kv";
 import { errorMessage } from "../../../../lib/apiError";
+import { parseRoleInput, ROLE_OPERATOR } from "../../../../lib/roles";
 
 export async function GET(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user || user.role !== "admin") {
       return NextResponse.json({ error: "Hanya admin yang bisa mengakses ini." }, { status: 403 });
     }
@@ -19,14 +20,14 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user || user.role !== "admin") {
       return NextResponse.json({ error: "Hanya admin yang bisa mengakses ini." }, { status: 403 });
     }
     const body = await request.json().catch(() => ({}));
     const username = (body.username || "").trim();
     const password = body.password || "";
-    const role = body.role === "admin" ? "admin" : "member";
+    const role = parseRoleInput(body.role) || ROLE_OPERATOR;
     if (!username || !password) {
       return NextResponse.json({ error: "Isi username dan kata sandi." }, { status: 400 });
     }

@@ -5,7 +5,7 @@ import { errorMessage } from "../../../../lib/apiError";
 
 export async function GET(request) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     const total = await countAccounts();
     return NextResponse.json({ hasAccounts: total > 0, user });
   } catch (err) {

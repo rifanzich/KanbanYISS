@@ -31,7 +31,13 @@ import {
   Trash2,
   Eye,
   Search,
+  Inbox,
 } from "lucide-react";
+import SubmitterPortal from "./SubmitterPortal";
+import RequestsInbox from "./RequestsInbox";
+import { formatDateInput, safeHref } from "./requestUi";
+import { deriveProgress, progressGroup, locateRequestCard, requestCardId } from "../lib/requestProgress";
+import { ROLE_LABEL } from "../lib/roles";
 
 // Install a window.storage shim that forwards to the Next.js API routes
 // (backed by Vercel KV) instead of Claude's artifact storage. The call
@@ -193,12 +199,65 @@ function cardMatchesQuery(card, query) {
   if (!q) return true;
   if ((card.text || "").toLowerCase().includes(q)) return true;
   if ((card.cardType || "").toLowerCase().includes(q)) return true;
+  if ((card.requester || "").toLowerCase().includes(q)) return true;
   return (card.involvedMembers || []).some((m) => (m || "").toLowerCase().includes(q));
 }
 
 function getMonthBoard(board, monthKey) {
   if (board.monthly && board.monthly[monthKey]) return board.monthly[monthKey];
   return { columns: defaultColumnsTemplate(monthKey), cards: {} };
+}
+
+// ---- Pengajuan dari luar tim media -> kartu di papan penerima ----
+// Kartu dibuat dengan id tetap (req-<id>) sehingga proses ini idempotent:
+// dijalankan dua kali (atau oleh dua operator sekaligus) tidak membuat kartu ganda.
+function buildCardFromRequest(r, cardTypes) {
+  const now = Date.now();
+  let days = 1;
+  if (r.neededBy) {
+    const dueTs = dateInputToTimestamp(r.neededBy) + 9 * UNIT_MS.jam; // sampai jam 17.00 hari itu
+    days = Math.max(1, Math.ceil((dueTs - now) / UNIT_MS.hari));
+  }
+  const knownType = r.cardType && (cardTypes || []).includes(r.cardType);
+  const description = !knownType && r.cardType ? `Jenis diminta: ${r.cardType}${r.description ? `\n\n${r.description}` : ""}` : r.description || "";
+  return {
+    id: requestCardId(r.id),
+    text: r.title,
+    createdAt: r.createdAt || now,
+    duration: { amount: days, unit: "hari" },
+    involvedMembers: [],
+    cardType: knownType ? r.cardType : "",
+    qty: Number(r.qty) > 0 ? Number(r.qty) : 1,
+    checked: false,
+    priority: !!r.urgent,
+    requestId: r.id,
+    requester: r.submitter,
+    description,
+    neededBy: r.neededBy || "",
+    link: r.link || "",
+  };
+}
+
+function applyRequestsToBoard(d, boardId, monthKey, pending) {
+  const board = d.boards[boardId];
+  if (!board) return d;
+  const monthly = { ...(board.monthly || {}) };
+  let changed = false;
+  for (const r of pending) {
+    const cid = requestCardId(r.id);
+    const exists = Object.values(monthly).some((mb) => mb && mb.cards && mb.cards[cid]);
+    if (exists) continue;
+    const mb = monthly[monthKey] || { columns: defaultColumnsTemplate(monthKey), cards: {} };
+    if (!mb.columns.length) continue;
+    monthly[monthKey] = {
+      ...mb,
+      cards: { ...mb.cards, [cid]: buildCardFromRequest(r, d.cardTypes) },
+      // Kartu baru selalu di paling atas kolom pertama (Belum Dikerjakan).
+      columns: mb.columns.map((c, i) => (i === 0 ? { ...c, cardIds: [cid, ...c.cardIds] } : c)),
+    };
+    changed = true;
+  }
+  return changed ? { ...d, boards: { ...d.boards, [boardId]: { ...board, monthly } } } : d;
 }
 
 const emptyWorkspaceData = () => ({
@@ -615,12 +674,21 @@ export default function RuangWorkspace() {
   const [showAccountPanel, setShowAccountPanel] = useState(false);
   const [newAccUsername, setNewAccUsername] = useState("");
   const [newAccPassword, setNewAccPassword] = useState("");
-  const [newAccRole, setNewAccRole] = useState("member");
+  const [newAccRole, setNewAccRole] = useState("operator");
   const [accountError, setAccountError] = useState("");
   const [editingAccount, setEditingAccount] = useState(null); // username currently being edited
   const [editAccUsername, setEditAccUsername] = useState("");
   const [editAccPassword, setEditAccPassword] = useState("");
   const [editAccError, setEditAccError] = useState("");
+  const [editAccRole, setEditAccRole] = useState("operator");
+
+  // ---- Pengajuan (form dari luar tim media) ----
+  const [requests, setRequests] = useState([]);
+  const [intakeConfig, setIntakeConfig] = useState(null);
+  const [requestsRefreshing, setRequestsRefreshing] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const isSubmitter = currentUser?.role === "submitter";
+  const isStaff = !!currentUser && !isSubmitter;
 
   // ---- Workspace state ----
   const [workspaces, setWorkspaces] = useState(null);
@@ -831,9 +899,9 @@ export default function RuangWorkspace() {
     })();
   }, []);
 
-  // Load workspace indices once logged in
+  // Load workspace indices once logged in (akun submitter tidak punya ruang kerja)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.role === "submitter") return;
     (async () => {
       let personal = [];
       let shared = [];
@@ -901,6 +969,69 @@ export default function RuangWorkspace() {
     }, 30000);
     return () => clearInterval(interval);
   }, [activeWs?.id, activeWs?.mode, ready]);
+
+  // ---- Pengajuan masuk (admin & operator) ----
+  const loadRequests = async () => {
+    try {
+      const res = await fetch("/api/requests", { credentials: "include" });
+      const data = await res.json();
+      if (res.ok) {
+        setRequests(data.requests || []);
+        setIntakeConfig(data.config || null);
+      }
+    } catch (e) {}
+  };
+
+  const refreshRequests = async () => {
+    setRequestsRefreshing(true);
+    await loadRequests();
+    setRequestsRefreshing(false);
+  };
+
+  useEffect(() => {
+    if (!isStaff) return;
+    loadRequests();
+    const t = setInterval(loadRequests, 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff, currentUser?.username]);
+
+  // Pengajuan baru otomatis dimasukkan sebagai kartu ke kolom pertama papan
+  // penerima, oleh klien admin/operator mana pun yang sedang membuka ruang
+  // penerima. Pengajuan baru ditandai "sudah masuk" ke server SETELAH
+  // penyimpanan ruang selesai, supaya tidak ada kartu yang hilang di tengah jalan.
+  const ingestingRef = useRef(false);
+  useEffect(() => {
+    if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
+    if (activeWs.id !== intakeConfig.workspaceId) return;
+    if (!wsData.boards[intakeConfig.boardId]) return;
+    const pending = requests.filter((r) => !r.ingested);
+    if (!pending.length || ingestingRef.current) return;
+    ingestingRef.current = true;
+    (async () => {
+      try {
+        const boardId = intakeConfig.boardId;
+        const monthKey = currentMonthKey();
+        setWsData((d) => (d ? applyRequestsToBoard(d, boardId, monthKey, pending) : d));
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        for (let i = 0; i < 30 && saveInFlightRef.current; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const res = await fetch("/api/requests/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ workspaceId: intakeConfig.workspaceId, boardId, items: pending.map((r) => ({ id: r.id, monthKey })) }),
+        });
+        if (res.ok) await loadRequests();
+      } catch (e) {
+        console.error("Gagal memasukkan pengajuan ke papan:", e);
+      } finally {
+        ingestingRef.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
 
   // ---- Auth actions ----
   const handleCreateFirstAdmin = async () => {
@@ -1004,7 +1135,7 @@ export default function RuangWorkspace() {
       await loadAccounts();
       setNewAccUsername("");
       setNewAccPassword("");
-      setNewAccRole("member");
+      setNewAccRole("operator");
       setAccountError("");
     } catch (e) {
       setAccountError("Tidak bisa terhubung ke server.");
@@ -1022,6 +1153,7 @@ export default function RuangWorkspace() {
   const startEditAccount = (username) => {
     setEditingAccount(username);
     setEditAccUsername(username);
+    setEditAccRole((accounts.find((a) => a.username === username) || {}).role || "operator");
     setEditAccPassword("");
     setEditAccError("");
   };
@@ -1045,7 +1177,7 @@ export default function RuangWorkspace() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ newUsername: uname, newPassword: editAccPassword }),
+        body: JSON.stringify({ newUsername: uname, newPassword: editAccPassword, newRole: editAccRole }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1191,6 +1323,15 @@ export default function RuangWorkspace() {
     );
   }
 
+  if (currentUser.role === "submitter") {
+    return (
+      <div className="rw-app" data-theme={theme} style={{ ...styles.app, display: "block", height: "auto", minHeight: "100vh" }}>
+        <style>{RESPONSIVE_CSS}</style>
+        <SubmitterPortal user={currentUser} theme={theme} onToggleTheme={toggleTheme} onLogout={handleLogout} fallbackCardTypes={DEFAULT_CARD_TYPES} />
+      </div>
+    );
+  }
+
   if (!workspaces || !wsData) {
     return (
       <div style={styles.loadingWrap}>
@@ -1224,8 +1365,72 @@ export default function RuangWorkspace() {
   const { overdue, dueSoon } = collectUrgentCards(wsData);
   const urgentCount = overdue.length + dueSoon.length;
 
-  const setActive = (active) => setWsData((d) => ({ ...d, active }));
+  const setActive = (active) => {
+    setInboxOpen(false);
+    setWsData((d) => ({ ...d, active }));
+  };
   const closeSidebar = () => setSidebarOpen(false);
+
+  // ---- Pengajuan: ruang/papan penerima, terima pekerjaan, badge ----
+  const localIsIntake = !!intakeConfig && activeWs?.id === intakeConfig.workspaceId && !!wsData.boards[intakeConfig.boardId];
+  const displayIntake = localIsIntake
+    ? { ...intakeConfig, workspaceName: activeWs.name, boardName: wsData.boards[intakeConfig.boardId].name }
+    : intakeConfig;
+  const progressOf = (r) => (localIsIntake ? deriveProgress(r, wsData, intakeConfig.boardId) : r.progress);
+  const inboxCount = requests.filter((r) => progressGroup(progressOf(r)) === "waiting").length;
+  const intakeBoardIdHere = intakeConfig && activeWs && intakeConfig.workspaceId === activeWs.id ? intakeConfig.boardId : null;
+
+  const infoDialog = (message) => requestConfirm(message, () => {}, { confirmLabel: "Mengerti" });
+
+  const setIntakeBoard = async (boardId) => {
+    const board = wsData.boards[boardId];
+    if (!board || !activeWs) return;
+    try {
+      const res = await fetch("/api/requests/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ workspaceId: activeWs.id, boardId, workspaceName: activeWs.name, boardName: board.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        infoDialog(data.error || "Gagal mengatur papan penerima.");
+        return;
+      }
+      setIntakeConfig(data.config);
+      await loadRequests();
+    } catch (e) {
+      infoDialog("Tidak bisa terhubung ke server.");
+    }
+  };
+
+  // Menerima pekerjaan = menambahkan diri ke "Tim terlibat" pada kartunya.
+  const toggleAccept = (boardId, monthKey, cardId) => {
+    const me = currentUser.username;
+    patchMonthBoard(boardId, monthKey, (mb) => {
+      const card = mb.cards[cardId];
+      if (!card) return null;
+      const cur = card.involvedMembers || [];
+      const next = cur.includes(me) ? cur.filter((m) => m !== me) : [...cur, me];
+      return { ...mb, cards: { ...mb.cards, [cardId]: { ...card, involvedMembers: next } } };
+    });
+    // Status di sisi pengaju dibaca dari data tersimpan; muat ulang setelah tersimpan.
+    setTimeout(loadRequests, 1800);
+  };
+
+  const acceptFromInbox = (r) => {
+    const loc = locateRequestCard(wsData, r, intakeConfig && intakeConfig.boardId);
+    if (loc) toggleAccept(loc.boardId, loc.monthKey, loc.cardId);
+  };
+
+  const openIntakeWorkspace = () => {
+    if (!intakeConfig) return;
+    if (!workspaces.some((w) => w.id === intakeConfig.workspaceId)) {
+      infoDialog("Kamu belum terdaftar di ruang penerima pengajuan. Minta admin menambahkanmu ke anggota ruang tersebut.");
+      return;
+    }
+    setActiveWsId(intakeConfig.workspaceId);
+  };
 
   // "Tim terlibat" now draws from real portal accounts: the approved
   // roster for team workspaces, or every registered account for personal ones.
@@ -1772,6 +1977,14 @@ export default function RuangWorkspace() {
         setNewAccPassword={setNewAccPassword}
         newAccRole={newAccRole}
         setNewAccRole={setNewAccRole}
+        editAccRole={editAccRole}
+        setEditAccRole={setEditAccRole}
+        inboxOpen={inboxOpen}
+        inboxCount={inboxCount}
+        onSelectInbox={() => {
+          setInboxOpen(true);
+          closeSidebar();
+        }}
         accountError={accountError}
         onAddAccount={handleAddAccount}
         onRequestDeleteAccount={(u) => requestConfirm(`Hapus akun "${u}"?`, () => performDeleteAccount(u))}
@@ -1787,6 +2000,7 @@ export default function RuangWorkspace() {
         workspaces={workspaces}
         activeWsId={activeWsId}
         onSelectWs={(id) => {
+          setInboxOpen(false);
           setActiveWsId(id);
           closeSidebar();
         }}
@@ -1831,10 +2045,22 @@ export default function RuangWorkspace() {
           setActive({ type: "mindmap", id });
           closeSidebar();
         }}
-        onAddBoard={addBoard}
-        onAddNote={addNote}
-        onAddMoodboard={addMoodboard}
-        onAddMindmap={addMindmap}
+        onAddBoard={() => {
+          setInboxOpen(false);
+          addBoard();
+        }}
+        onAddNote={() => {
+          setInboxOpen(false);
+          addNote();
+        }}
+        onAddMoodboard={() => {
+          setInboxOpen(false);
+          addMoodboard();
+        }}
+        onAddMindmap={() => {
+          setInboxOpen(false);
+          addMindmap();
+        }}
         onDeleteBoard={deleteBoard}
         onDeleteNote={deleteNote}
         onDeleteMoodboard={deleteMoodboard}
@@ -1855,10 +2081,24 @@ export default function RuangWorkspace() {
         {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
       </button>
       <main className="rw-main" style={styles.main}>
-        {activeWs?.mode === "team" && (
+        {inboxOpen && (
+          <RequestsInbox
+            requests={requests}
+            intakeConfig={displayIntake}
+            isAdmin={isAdmin}
+            currentUsername={currentUser.username}
+            wsData={wsData}
+            localIsIntake={localIsIntake}
+            refreshing={requestsRefreshing}
+            onRefresh={refreshRequests}
+            onToggleAccept={acceptFromInbox}
+            onOpenIntakeWs={openIntakeWorkspace}
+          />
+        )}
+        {!inboxOpen && activeWs?.mode === "team" && (
           <div style={styles.teamBanner}>Ruang tim — hanya anggota yang disetujui admin yang bisa membuka dan mengedit ruang ini.</div>
         )}
-        {activeBoard && (
+        {!inboxOpen && activeBoard && (
           <BoardView
             board={activeBoard}
             members={availableMembers}
@@ -1881,11 +2121,15 @@ export default function RuangWorkspace() {
             onRequestConfirm={requestConfirm}
             dragCard={dragCard}
             setDragCard={setDragCard}
+            intakeBoardId={intakeBoardIdHere}
+            canSetIntake={isAdmin && activeWs?.mode === "team"}
+            onSetIntake={setIntakeBoard}
+            onToggleAccept={toggleAccept}
           />
         )}
-        {activeNote && <NoteView note={activeNote} onUpdate={updateNote} />}
-        {activeInsight && <InsightView wsData={wsData} />}
-        {activeCalendar && (
+        {!inboxOpen && activeNote && <NoteView note={activeNote} onUpdate={updateNote} />}
+        {!inboxOpen && activeInsight && <InsightView wsData={wsData} />}
+        {!inboxOpen && activeCalendar && (
           <CalendarView
             wsData={wsData}
             currentUsername={currentUser.username}
@@ -1901,7 +2145,7 @@ export default function RuangWorkspace() {
             onRequestConfirm={requestConfirm}
           />
         )}
-        {activeMoodboard && (
+        {!inboxOpen && activeMoodboard && (
           <MoodboardView
             board={activeMoodboard}
             onUpdateTitle={(title) => updateMoodboardTitle(activeMoodboard.id, title)}
@@ -1911,7 +2155,7 @@ export default function RuangWorkspace() {
             onBringFront={(itemId) => bringMoodboardItemFront(activeMoodboard.id, itemId)}
           />
         )}
-        {activeMindmap && (
+        {!inboxOpen && activeMindmap && (
           <MindMapView
             map={activeMindmap}
             onUpdateTitle={(title) => updateMindmapTitle(activeMindmap.id, title)}
@@ -1920,7 +2164,7 @@ export default function RuangWorkspace() {
             onDeleteNode={(nodeId) => requestConfirm("Hapus cabang ini beserta semua turunannya?", () => deleteMindmapNode(activeMindmap.id, nodeId))}
           />
         )}
-        {!activeBoard && !activeNote && !activeInsight && !activeCalendar && !activeMoodboard && !activeMindmap && (
+        {!inboxOpen && !activeBoard && !activeNote && !activeInsight && !activeCalendar && !activeMoodboard && !activeMindmap && (
           <div style={styles.empty}>
             <div style={styles.emptyTitle}>Belum ada yang dipilih</div>
             <div style={styles.emptyText}>Buat papan untuk melacak pekerjaan, catatan untuk menulis ide, moodboard untuk kumpulkan inspirasi, atau mind map untuk memetakan gagasan.</div>
@@ -2081,6 +2325,11 @@ function Sidebar({
   showNotifPanel,
   onToggleNotifPanel,
   onGoToUrgentCard,
+  editAccRole,
+  setEditAccRole,
+  inboxOpen,
+  inboxCount,
+  onSelectInbox,
 }) {
   const notifPanel = showNotifPanel && (
     <>
@@ -2136,6 +2385,10 @@ function Sidebar({
           <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, position: "relative" }} onClick={onToggleNotifPanel} title="Notifikasi tenggat waktu" aria-label="Notifikasi">
             <Bell size={16} />
             {urgentCount > 0 && !showNotifPanel && <span style={styles.bellBadge}>{urgentCount}</span>}
+          </button>
+          <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, position: "relative", ...(inboxOpen ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectInbox} title="Pengajuan Masuk">
+            <Inbox size={17} />
+            {inboxCount > 0 && <span style={styles.bellBadge}>{inboxCount}</span>}
           </button>
           <button className="rw-collapsed-icon" style={{ ...styles.collapsedIconBtn, ...(wsData.active.type === "insight" ? styles.collapsedIconBtnActive : {}) }} onClick={onSelectInsight} title="Insight">
             <PieChart size={17} />
@@ -2218,7 +2471,7 @@ function Sidebar({
       <div style={styles.userRow}>
         <div style={styles.userInfo}>
           <span style={styles.userName}>{currentUser.username}</span>
-          <span style={{ ...styles.userRoleBadge, ...(isAdmin ? styles.userRoleBadgeAdmin : {}) }}>{isAdmin ? "Admin" : "Anggota"}</span>
+          <span style={{ ...styles.userRoleBadge, ...(isAdmin ? styles.userRoleBadgeAdmin : {}) }}>{isAdmin ? ROLE_LABEL.admin : ROLE_LABEL[currentUser.role] || ROLE_LABEL.operator}</span>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           {canInstall && (
@@ -2271,6 +2524,17 @@ function Sidebar({
                         value={editAccPassword}
                         onChange={(e) => setEditAccPassword(e.target.value)}
                       />
+                      {a.username === currentUser.username ? (
+                        <div style={styles.modeHint}>Jenis akunmu ({ROLE_LABEL[a.role] || ROLE_LABEL.operator}) tidak bisa diubah sendiri.</div>
+                      ) : (
+                        <div style={styles.modeToggle}>
+                          {["operator", "admin", "submitter"].map((r) => (
+                            <button key={r} style={{ ...styles.modeBtn, ...(editAccRole === r ? styles.modeBtnActive : {}) }} onClick={() => setEditAccRole(r)}>
+                              {ROLE_LABEL[r]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {editAccError && <div style={styles.authError}>{editAccError}</div>}
                       <div style={{ display: "flex", gap: 6 }}>
                         <button style={{ ...styles.createWsBtn, flex: 1 }} onClick={onSaveEditAccount}>
@@ -2284,7 +2548,7 @@ function Sidebar({
                   ) : (
                     <div key={a.username} style={styles.memberRow}>
                       <span>
-                        {a.username} <span style={{ opacity: 0.6, fontSize: 10.5 }}>({a.role === "admin" ? "Admin" : "Anggota"})</span>
+                        {a.username} <span style={{ opacity: 0.6, fontSize: 10.5 }}>({ROLE_LABEL[a.role] || ROLE_LABEL.operator})</span>
                       </span>
                       <div style={{ display: "flex", gap: 4 }}>
                         <button style={styles.memberDelete} onClick={() => onStartEditAccount(a.username)} title="Edit akun">
@@ -2301,12 +2565,18 @@ function Sidebar({
               <input style={styles.addWsInput} placeholder="Username baru…" value={newAccUsername} onChange={(e) => setNewAccUsername(e.target.value)} />
               <input style={styles.addWsInput} type="password" placeholder="Kata sandi…" value={newAccPassword} onChange={(e) => setNewAccPassword(e.target.value)} />
               <div style={styles.modeToggle}>
-                <button style={{ ...styles.modeBtn, ...(newAccRole === "member" ? styles.modeBtnActive : {}) }} onClick={() => setNewAccRole("member")}>
-                  Anggota
-                </button>
-                <button style={{ ...styles.modeBtn, ...(newAccRole === "admin" ? styles.modeBtnActive : {}) }} onClick={() => setNewAccRole("admin")}>
-                  Admin
-                </button>
+                {["operator", "admin", "submitter"].map((r) => (
+                  <button key={r} style={{ ...styles.modeBtn, ...(newAccRole === r ? styles.modeBtnActive : {}) }} onClick={() => setNewAccRole(r)}>
+                    {ROLE_LABEL[r]}
+                  </button>
+                ))}
+              </div>
+              <div style={styles.modeHint}>
+                {newAccRole === "submitter"
+                  ? "Submitter: orang di luar tim media. Hanya bisa mengajukan pekerjaan dan memantau progresnya."
+                  : newAccRole === "admin"
+                  ? "Admin: mengelola akun, ruang tim, dan papan penerima pengajuan."
+                  : "Operator: anggota tim media. Bisa menerima pengajuan dan mengerjakan kartu."}
               </div>
               {accountError && <div style={styles.authError}>{accountError}</div>}
               <button style={styles.createWsBtn} onClick={onAddAccount}>
@@ -2445,6 +2715,12 @@ function Sidebar({
       </div>
 
       <div style={styles.divider} />
+
+      <div style={{ ...styles.insightNavItem, ...(inboxOpen ? styles.insightNavItemActive : {}) }} onClick={onSelectInbox}>
+        <Inbox size={15} />
+        <span style={{ flex: 1 }}>Pengajuan Masuk</span>
+        {inboxCount > 0 && <span style={styles.navBadge}>{inboxCount}</span>}
+      </div>
 
       <div
         style={{ ...styles.insightNavItem, ...(wsData.active.type === "insight" ? styles.insightNavItemActive : {}) }}
@@ -2938,7 +3214,7 @@ function CardTitle({ text, checked, priority, fromCalendar, checkboxDisabled, on
   );
 }
 
-function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard }) {
+function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard, intakeBoardId, canSetIntake, onSetIntake, onToggleAccept }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
   // Papan bulanan: setiap bulan punya kolom & kartunya sendiri. Dibuka
@@ -2999,6 +3275,20 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
   return (
     <div style={styles.boardWrap}>
       <input className="rw-board-title" style={styles.boardTitle} value={board.name} onChange={(e) => onRename(board.id, e.target.value)} />
+
+      {intakeBoardId === board.id ? (
+        <div style={styles.intakeBadge}>
+          <Inbox size={13} /> Papan penerima pengajuan — pengajuan dari luar tim masuk ke kolom pertama papan ini
+        </div>
+      ) : (
+        canSetIntake && (
+          <div>
+            <button style={styles.intakeBtn} onClick={() => onSetIntake(board.id)} title="Pengajuan dari akun submitter akan otomatis masuk ke kolom pertama papan ini">
+              <Inbox size={13} /> Jadikan papan penerima pengajuan
+            </button>
+          </div>
+        )
+      )}
 
       <div style={styles.monthTabRow}>
         <button style={styles.monthNavBtn} onClick={() => setViewMonth((m) => shiftMonthKey(m, -1))} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
@@ -3142,6 +3432,26 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
                       }}
                     />
 
+                    {card.requestId && (
+                      <div style={styles.requestBlock}>
+                        <div style={styles.requestHead}>
+                          <Inbox size={11} /> Pengajuan dari <strong>{card.requester}</strong>
+                        </div>
+                        {card.neededBy && <div style={styles.requestMeta}>Dibutuhkan: {formatDateInput(card.neededBy)}</div>}
+                        {(card.description || safeHref(card.link)) && (
+                          <details style={styles.requestDetails}>
+                            <summary style={styles.requestSummary}>Detail permintaan</summary>
+                            {card.description && <div style={styles.requestDesc}>{card.description}</div>}
+                            {safeHref(card.link) && (
+                              <a href={card.link} target="_blank" rel="noopener noreferrer" style={styles.requestLink}>
+                                Link referensi
+                              </a>
+                            )}
+                          </details>
+                        )}
+                      </div>
+                    )}
+
                     <CreatedDateEditor createdAt={card.createdAt} onChange={(ts) => onUpdateCard(board.id, viewMonth, cid, { createdAt: ts })} />
 
                     <TypeSelect
@@ -3181,6 +3491,17 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
                         )}
                       </div>
                     )}
+
+                    {card.requestId &&
+                      (involved.includes(currentUsername) ? (
+                        <button style={styles.acceptedBtn} onClick={() => onToggleAccept(board.id, viewMonth, cid)} title="Klik untuk membatalkan penerimaan">
+                          ✓ Kamu menerima ini · Batalkan
+                        </button>
+                      ) : (
+                        <button style={styles.acceptBtn} onClick={() => onToggleAccept(board.id, viewMonth, cid)}>
+                          Terima pekerjaan
+                        </button>
+                      ))}
 
                     {info && <span style={{ ...styles.durationPill, ...(info.status === "overdue" ? styles.durationOverdue : {}), ...(info.status === "due_soon" ? styles.durationDueSoon : {}) }}>⏱ {info.text}</span>}
                     {!info && card.duration && <span style={styles.durationPill}>⏱ Menunggu dimulai</span>}
@@ -4819,6 +5140,18 @@ const styles = {
   modalActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
   modalCancel: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" },
   modalConfirm: { background: "#EF4444", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+  navBadge: { background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px" },
+  intakeBadge: { display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start", fontSize: 12, color: "#059669", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 6, padding: "6px 10px" },
+  intakeBtn: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", background: "transparent", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 10px", cursor: "pointer" },
+  requestBlock: { display: "flex", flexDirection: "column", gap: 3, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 7, padding: "6px 8px" },
+  requestHead: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#3B82F6" },
+  requestMeta: { fontSize: 11, color: "var(--text-muted)" },
+  requestDetails: { marginTop: 2 },
+  requestSummary: { fontSize: 11, color: "var(--text-muted)", cursor: "pointer" },
+  requestDesc: { fontSize: 12, lineHeight: 1.5, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 },
+  requestLink: { display: "inline-block", fontSize: 11.5, color: "#3B82F6", marginTop: 4 },
+  acceptBtn: { background: "#10B981", color: "#fff", border: "none", borderRadius: 6, padding: "7px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" },
+  acceptedBtn: { background: "rgba(16,185,129,0.14)", color: "#10B981", border: "1px solid rgba(16,185,129,0.4)", borderRadius: 6, padding: "6px 0", fontSize: 11.5, fontWeight: 600, cursor: "pointer" },
   modalOk: { background: "#3B82F6", border: "none", color: "#fff", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontWeight: 500 },
 
   calendarWrap: { display: "flex", flexDirection: "column", gap: 4, maxWidth: 620, width: "100%", margin: "0 auto" },

@@ -3,10 +3,12 @@ import bcrypt from "bcryptjs";
 import { getSessionUser, signSession, buildSessionCookie } from "../../../../../lib/auth";
 import { deleteAccount, getAccount, saveAccount, renameAccount, migratePersonalKeys, renameInSharedRoster } from "../../../../../lib/kv";
 import { errorMessage } from "../../../../../lib/apiError";
+import { parseRoleInput } from "../../../../../lib/roles";
+import { renameRequestSubmitter } from "../../../../../lib/requests";
 
 export async function DELETE(request, { params }) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user || user.role !== "admin") {
       return NextResponse.json({ error: "Hanya admin yang bisa mengakses ini." }, { status: 403 });
     }
@@ -23,7 +25,7 @@ export async function DELETE(request, { params }) {
 // nothing gets orphaned.
 export async function PATCH(request, { params }) {
   try {
-    const user = getSessionUser(request);
+    const user = await getSessionUser(request);
     if (!user || user.role !== "admin") {
       return NextResponse.json({ error: "Hanya admin yang bisa mengakses ini." }, { status: 403 });
     }
@@ -38,6 +40,17 @@ export async function PATCH(request, { params }) {
     const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
     const wantsRename = newUsernameRaw && newUsernameRaw !== oldUsername;
 
+    // Ganti jenis akun (admin / operator / submitter). Admin tidak bisa
+    // mengubah jenis akunnya sendiri supaya portal tidak pernah kehilangan admin.
+    const newRole = body.newRole ? parseRoleInput(body.newRole) : null;
+    if (body.newRole && !newRole) {
+      return NextResponse.json({ error: "Jenis akun tidak dikenal." }, { status: 400 });
+    }
+    const wantsRoleChange = !!newRole && newRole !== existing.role;
+    if (wantsRoleChange && user.username === oldUsername) {
+      return NextResponse.json({ error: "Kamu tidak bisa mengubah jenis akunmu sendiri." }, { status: 400 });
+    }
+
     let finalUsername = oldUsername;
     let account = existing;
 
@@ -49,6 +62,7 @@ export async function PATCH(request, { params }) {
       await renameAccount(oldUsername, newUsernameRaw);
       await migratePersonalKeys(oldUsername, newUsernameRaw);
       await renameInSharedRoster(oldUsername, newUsernameRaw);
+      await renameRequestSubmitter(oldUsername, newUsernameRaw);
       finalUsername = newUsernameRaw;
       account = { ...existing, username: finalUsername };
     }
@@ -57,7 +71,11 @@ export async function PATCH(request, { params }) {
       account = { ...account, passwordHash: await bcrypt.hash(newPassword, 10) };
     }
 
-    if (wantsRename || newPassword) {
+    if (wantsRoleChange) {
+      account = { ...account, role: newRole };
+    }
+
+    if (wantsRename || newPassword || wantsRoleChange) {
       await saveAccount(account);
     }
 
