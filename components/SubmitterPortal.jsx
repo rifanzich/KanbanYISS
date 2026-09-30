@@ -361,6 +361,8 @@ function RequestItem({ r, busy, onCancel, onDelete }) {
   const canCancel = p.stage !== "done" && p.stage !== "cancelled";
   // Hapus hanya untuk yang belum diterima operator ("Menunggu") atau yang sudah dibatalkan.
   const canDelete = p.stage === "waiting" || p.stage === "cancelled";
+  const href = safeHref(r.link);
+  const target = durationLabel(p.duration);
   return (
     <article style={s.item}>
       <div style={s.itemTop}>
