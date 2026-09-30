@@ -1033,6 +1033,45 @@ export default function RuangWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
 
+  // Pengajuan yang dibatalkan submitter: kartunya dihapus dari papan penerima oleh
+  // klien admin/operator yang sedang membuka ruang tersebut (kartu yang sudah
+  // di kolom selesai tidak disentuh). Hook ini harus berada sebelum return awal.
+  useEffect(() => {
+    if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
+    if (activeWs.id !== intakeConfig.workspaceId || !wsData.boards[intakeConfig.boardId]) return;
+    const targets = [];
+    for (const r of requests) {
+      if (!r.cancelledAt || !r.ingested) continue;
+      const loc = locateRequestCard(wsData, r, intakeConfig.boardId);
+      if (loc && !(loc.columnIndex >= 2)) targets.push(loc);
+    }
+    if (!targets.length) return;
+    setWsData((d) => {
+      if (!d) return d;
+      let next = d;
+      for (const t of targets) {
+        const board = next.boards[t.boardId];
+        const mb = board && board.monthly && board.monthly[t.monthKey];
+        if (!mb || !mb.cards || !mb.cards[t.cardId]) continue;
+        const cards = { ...mb.cards };
+        delete cards[t.cardId];
+        const columns = (mb.columns || []).map((c) => ({ ...c, cardIds: c.cardIds.filter((id) => id !== t.cardId) }));
+        let calendarNotes = next.calendarNotes;
+        if (calendarNotes) {
+          calendarNotes = { ...calendarNotes };
+          Object.keys(calendarNotes).forEach((dateStr) => {
+            const kept = calendarNotes[dateStr].filter((n) => !(n.boardId === t.boardId && n.monthKey === t.monthKey && n.cardId === t.cardId));
+            if (kept.length) calendarNotes[dateStr] = kept;
+            else delete calendarNotes[dateStr];
+          });
+        }
+        next = { ...next, calendarNotes, boards: { ...next.boards, [t.boardId]: { ...board, monthly: { ...board.monthly, [t.monthKey]: { ...mb, cards, columns } } } } };
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
+
   // ---- Auth actions ----
   const handleCreateFirstAdmin = async () => {
     const uname = loginUsername.trim();
@@ -1643,20 +1682,6 @@ export default function RuangWorkspace() {
       return { ...d, boards, calendarNotes };
     });
   };
-
-  // Pengajuan yang dibatalkan submitter: kartunya dihapus dari papan penerima oleh
-  // klien admin/operator yang sedang membuka ruang tersebut (kartu yang sudah
-  // di kolom selesai tidak disentuh).
-  useEffect(() => {
-    if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
-    if (activeWs.id !== intakeConfig.workspaceId || !wsData.boards[intakeConfig.boardId]) return;
-    for (const r of requests) {
-      if (!r.cancelledAt || !r.ingested) continue;
-      const loc = locateRequestCard(wsData, r, intakeConfig.boardId);
-      if (loc && !(loc.columnIndex >= 2)) deleteCard(loc.boardId, loc.monthKey, loc.cardId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
 
   const moveCard = (boardId, monthKey, fromCol, toCol, cardId) => {
     patchMonthBoard(boardId, monthKey, (mb) => {
