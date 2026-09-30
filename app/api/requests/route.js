@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "../../../lib/auth";
-import { listRequests, saveRequest, newRequestId, getIntakeConfig, attachProgress } from "../../../lib/requests";
+import { listRequests, saveRequest, newRequestId, nextQueueNo, ensureQueueNumbers, deleteRequest, getIntakeConfig, attachProgress } from "../../../lib/requests";
 import { errorMessage } from "../../../lib/apiError";
 
 const isDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(`${s}T00:00:00`).getTime());
@@ -14,13 +14,20 @@ export async function GET(request) {
     if (!user) return NextResponse.json({ error: "Belum login." }, { status: 401 });
     const staff = user.role !== "submitter";
 
-    let list = await listRequests();
+    let all = await ensureQueueNumbers(await listRequests());
+    const config = await getIntakeConfig();
+    // Progres dihitung untuk semua pengajuan agar "antrian di depan" akurat.
+    const attached = await attachProgress(all, config);
+
+    // Kartu yang dihapus tim media dari papan -> pengajuannya ikut dihapus otomatis
+    // (hilang dari dashboard submitter dan Pengajuan Masuk).
+    const gone = attached.requests.filter((r) => r.progress.stage === "removed");
+    for (const r of gone) await deleteRequest(r.id);
+    let list = attached.requests.filter((r) => r.progress.stage !== "removed");
+
     if (!staff) list = list.filter((r) => r.submitter === user.username);
     list.sort((a, b) => b.createdAt - a.createdAt);
-
-    const config = await getIntakeConfig();
-    const { requests, cardTypes } = await attachProgress(list, config);
-    return NextResponse.json({ requests, cardTypes, config: staff ? config : undefined });
+    return NextResponse.json({ requests: list, cardTypes: attached.cardTypes, config: staff ? config : undefined });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
   }
@@ -60,6 +67,7 @@ export async function POST(request) {
       urgent: !!body.urgent,
       submitter: user.username,
       createdAt: Date.now(),
+      queueNo: await nextQueueNo(),
       ingested: null,
     };
     await saveRequest(req);

@@ -1,14 +1,15 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, X, LogOut, Sun, Moon, RefreshCw, Send, Inbox } from "lucide-react";
+import { Plus, X, LogOut, Sun, Moon, RefreshCw, Send, Inbox, Trash2 } from "lucide-react";
 import { progressGroup } from "../lib/requestProgress";
-import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, safeHref, durationLabel, rq } from "./requestUi";
+import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, durationLabel, rq } from "./requestUi";
 
 const FILTERS = [
   { key: "all", label: "Semua" },
   { key: "waiting", label: "Menunggu" },
   { key: "active", label: "Diproses" },
   { key: "done", label: "Selesai" },
+  { key: "cancelled", label: "Dibatalkan" },
 ];
 
 const EMPTY_FORM = { title: "", cardType: "", otherType: "", qty: 1, neededBy: "", urgent: false, description: "", link: "" };
@@ -33,6 +34,8 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState("");
+  const [confirm, setConfirm] = useState(null); // { kind: "cancel" | "delete", r }
+  const [busyId, setBusyId] = useState("");
 
   const load = useCallback(async (manual) => {
     if (manual) setRefreshing(true);
@@ -107,12 +110,39 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
     }
   };
 
+  const runAction = async () => {
+    if (!confirm) return;
+    const { kind, r } = confirm;
+    setBusyId(r.id);
+    try {
+      const res = await fetch(`/api/requests/${r.id}`, {
+        method: kind === "cancel" ? "PATCH" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: kind === "cancel" ? JSON.stringify({ action: "cancel" }) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToast(data.error || "Aksi gagal dijalankan.");
+      } else {
+        setToast(kind === "cancel" ? "Pengajuan dibatalkan. Kartunya akan dihapus dari papan tim." : "Pengajuan dihapus.");
+      }
+      await load(false);
+    } catch (e) {
+      setToast("Tidak bisa terhubung ke server.");
+    } finally {
+      setBusyId("");
+      setConfirm(null);
+    }
+  };
+
   const groups = requests.map((r) => progressGroup(r.progress));
   const counts = {
     all: requests.length,
     waiting: groups.filter((g) => g === "waiting").length,
     active: groups.filter((g) => g === "active").length,
     done: groups.filter((g) => g === "done").length,
+    cancelled: groups.filter((g) => g === "cancelled").length,
   };
   const visible = requests.filter((r) => filter === "all" || progressGroup(r.progress) === filter);
 
@@ -188,7 +218,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
         ) : (
           <div style={s.list}>
             {visible.map((r) => (
-              <RequestItem key={r.id} r={r} />
+              <RequestItem key={r.id} r={r} busy={busyId === r.id} onCancel={() => setConfirm({ kind: "cancel", r })} onDelete={() => setConfirm({ kind: "delete", r })} />
             ))}
           </div>
         )}
@@ -270,6 +300,28 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
           </div>
         </div>
       )}
+      {confirm && (
+        <div style={s.overlay} onClick={() => !busyId && setConfirm(null)}>
+          <div style={{ ...s.modal, maxWidth: 400 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div style={s.modalTitle}>{confirm.kind === "cancel" ? "Batalkan pengajuan?" : "Hapus pengajuan?"}</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--text-muted)" }}>
+              <strong style={{ color: "var(--text-primary)" }}>{confirm.r.title}</strong>
+              <br />
+              {confirm.kind === "cancel"
+                ? "Kartunya akan dihapus dari papan tim media dan pengajuan ini ditandai dibatalkan."
+                : "Pengajuan ini akan dihapus permanen dari dashboardmu."}
+            </div>
+            <div style={s.modalActions}>
+              <button style={s.cancelBtn} onClick={() => setConfirm(null)} disabled={!!busyId}>
+                Kembali
+              </button>
+              <button style={{ ...s.primaryBtn, background: "#EF4444", opacity: busyId ? 0.7 : 1 }} onClick={runAction} disabled={!!busyId}>
+                {busyId ? "Memproses…" : confirm.kind === "cancel" ? "Ya, batalkan" : "Ya, hapus"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <style>{`@keyframes rq-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
@@ -284,8 +336,11 @@ function StatCard({ label, value, color }) {
   );
 }
 
-function RequestItem({ r }) {
+function RequestItem({ r, busy, onCancel, onDelete }) {
   const p = r.progress;
+  const canCancel = p.stage !== "done" && p.stage !== "cancelled";
+  // Yang masih punya kartu di papan harus dibatalkan dulu; sisanya boleh langsung dihapus.
+  const canDelete = !canCancel || !r.ingested;
   const href = safeHref(r.link);
   const target = durationLabel(p.duration);
   return (
@@ -293,6 +348,7 @@ function RequestItem({ r }) {
       <div style={s.itemTop}>
         <div style={{ minWidth: 0 }}>
           <div style={s.itemTitleRow}>
+            {r.queueNo ? <span style={rq.queueBadge} title="Nomor antrian">#{formatQueueNo(r.queueNo)}</span> : null}
             <h3 style={s.itemTitle}>{r.title}</h3>
             {r.urgent && <span style={rq.urgentBadge}>MENDESAK</span>}
           </div>
@@ -317,13 +373,31 @@ function RequestItem({ r }) {
               </span>
             ))}
           </>
-        ) : p.stage === "removed" ? (
-          <span style={rq.metaText}>Kartu ini sudah dihapus dari papan tim. Hubungi tim media bila perlu penjelasan.</span>
+        ) : p.stage === "cancelled" ? (
+          <span style={rq.metaText}>Pengajuan ini kamu batalkan.</span>
         ) : (
           <span style={rq.metaText}>Belum ada operator yang menerima pengajuan ini.</span>
         )}
-        {target && p.stage !== "done" && p.stage !== "removed" && <span style={{ ...rq.metaText, marginLeft: "auto" }}>Target pengerjaan: {target}</span>}
+        {r.queueAhead != null && (
+          <span style={{ ...rq.metaText, marginLeft: "auto" }}>{r.queueAhead === 0 ? "Antrian terdepan" : `${r.queueAhead} pekerjaan di depan`}</span>
+        )}
+        {target && p.stage !== "done" && p.stage !== "cancelled" && <span style={{ ...rq.metaText, marginLeft: "auto" }}>Target pengerjaan: {target}</span>}
       </div>
+
+      {(canCancel || canDelete) && (
+        <div style={s.actionRow}>
+          {canCancel && (
+            <button style={s.dangerGhost} onClick={onCancel} disabled={busy}>
+              Batalkan
+            </button>
+          )}
+          {canDelete && (
+            <button style={s.dangerGhost} onClick={onDelete} disabled={busy}>
+              <Trash2 size={12} /> Hapus
+            </button>
+          )}
+        </div>
+      )}
 
       {(r.description || href) && (
         <details style={s.details}>
@@ -384,6 +458,8 @@ const s = {
   itemTitleRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 },
   itemTitle: { margin: 0, fontSize: 15.5, fontWeight: 600, letterSpacing: "-0.01em", wordBreak: "break-word" },
   teamRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 14 },
+  actionRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+  dangerGhost: { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", border: "1px solid rgba(239,68,68,0.4)", color: "#EF4444", borderRadius: 8, padding: "5px 11px", fontSize: 12, cursor: "pointer" },
   details: { marginTop: 12, borderTop: "1px solid var(--card-border)", paddingTop: 10 },
   summary: { fontSize: 12.5, color: "#3B82F6", cursor: "pointer", fontWeight: 500 },
 

@@ -1005,7 +1005,7 @@ export default function RuangWorkspace() {
     if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
     if (activeWs.id !== intakeConfig.workspaceId) return;
     if (!wsData.boards[intakeConfig.boardId]) return;
-    const pending = requests.filter((r) => !r.ingested);
+    const pending = requests.filter((r) => !r.ingested && !r.cancelledAt);
     if (!pending.length || ingestingRef.current) return;
     ingestingRef.current = true;
     (async () => {
@@ -1643,6 +1643,20 @@ export default function RuangWorkspace() {
       return { ...d, boards, calendarNotes };
     });
   };
+
+  // Pengajuan yang dibatalkan submitter: kartunya dihapus dari papan penerima oleh
+  // klien admin/operator yang sedang membuka ruang tersebut (kartu yang sudah
+  // di kolom selesai tidak disentuh).
+  useEffect(() => {
+    if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
+    if (activeWs.id !== intakeConfig.workspaceId || !wsData.boards[intakeConfig.boardId]) return;
+    for (const r of requests) {
+      if (!r.cancelledAt || !r.ingested) continue;
+      const loc = locateRequestCard(wsData, r, intakeConfig.boardId);
+      if (loc && !(loc.columnIndex >= 2)) deleteCard(loc.boardId, loc.monthKey, loc.cardId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
 
   const moveCard = (boardId, monthKey, fromCol, toCol, cardId) => {
     patchMonthBoard(boardId, monthKey, (mb) => {

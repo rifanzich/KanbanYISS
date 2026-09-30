@@ -14,6 +14,7 @@ export const STAGE_COLOR = {
   doing: "#8B5CF6",
   done: "#10B981",
   removed: "#9CA3AF",
+  cancelled: "#EF4444",
   unknown: "#9CA3AF",
 };
 
@@ -38,6 +39,11 @@ export function durationLabel(duration) {
   return `${duration.amount} ${duration.unit}`;
 }
 
+// Nomor antrian tetap milik pengajuan (mis. "A-012").
+export function formatQueueNo(n) {
+  return n ? `A-${String(n).padStart(3, "0")}` : "";
+}
+
 export function StatusPill({ progress }) {
   const color = STAGE_COLOR[progress.stage] || STAGE_COLOR.unknown;
   return (
@@ -50,7 +56,7 @@ export function StatusPill({ progress }) {
 
 export function ProgressTrack({ progress, compact }) {
   const color = STAGE_COLOR[progress.stage] || STAGE_COLOR.unknown;
-  const dead = progress.stage === "removed" || progress.stage === "unknown";
+  const dead = progress.stage === "removed" || progress.stage === "unknown" || progress.stage === "cancelled";
   return (
     <div style={{ ...rq.track, marginTop: compact ? 8 : 14 }} aria-label={`Progres: ${progress.label}`}>
       {PROGRESS_STEPS.map((label, i) => {
@@ -92,6 +98,7 @@ export const rq = {
   trackLabel: { fontSize: 11, textAlign: "center", lineHeight: 1.25 },
   chip: { fontSize: 11, padding: "3px 9px", borderRadius: 12, background: "rgba(59,130,246,0.14)", color: "#3B82F6", border: "1px solid rgba(59,130,246,0.3)", fontWeight: 600 },
   metaText: { fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 },
+  queueBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: "#3B82F6", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.35)", borderRadius: 6, padding: "2px 8px", letterSpacing: 0.3, whiteSpace: "nowrap" },
   urgentBadge: { fontSize: 10.5, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999, padding: "2px 8px", letterSpacing: 0.3 },
   desc: { fontSize: 13, lineHeight: 1.6, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word" },
   link: { fontSize: 12.5, color: "#3B82F6", wordBreak: "break-all" },

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { RefreshCw, Inbox, Check } from "lucide-react";
 import { deriveProgress, progressGroup } from "../lib/requestProgress";
-import { StatusPill, ProgressTrack, formatDateID, formatDateInput, safeHref, rq } from "./requestUi";
+import { StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, rq } from "./requestUi";
 
 const FILTERS = [
   { key: "waiting", label: "Belum diterima" },
@@ -19,10 +19,13 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
 
   // Bila ruang penerima sedang dibuka, pakai data lokal (lebih baru daripada
   // hasil server yang baru menyusul setelah penyimpanan).
-  const rows = requests.map((r) => ({
-    r,
-    p: localIsIntake && intakeConfig ? deriveProgress(r, wsData, intakeConfig.boardId) : r.progress,
-  }));
+  // Pengajuan yang kartunya sudah dihapus tim langsung disembunyikan (server ikut menghapusnya).
+  const rows = requests
+    .map((r) => ({
+      r,
+      p: localIsIntake && intakeConfig ? deriveProgress(r, wsData, intakeConfig.boardId) : r.progress,
+    }))
+    .filter((x) => x.p.stage !== "removed");
   const groupOf = (row) => progressGroup(row.p);
   const counts = {
     waiting: rows.filter((x) => groupOf(x) === "waiting").length,
@@ -79,6 +82,7 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
                 <div style={s.itemTop}>
                   <div style={{ minWidth: 0 }}>
                     <div style={s.itemTitleRow}>
+                      {r.queueNo ? <span style={rq.queueBadge} title="Nomor antrian">#{formatQueueNo(r.queueNo)}</span> : null}
                       <h3 style={s.itemTitle}>{r.title}</h3>
                       {r.urgent && <span style={rq.urgentBadge}>MENDESAK</span>}
                     </div>
@@ -119,7 +123,7 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
                         ))}
                       </>
                     ) : (
-                      <span style={rq.metaText}>{p.stage === "removed" ? "Kartu sudah dihapus dari papan." : "Belum ada yang menerima"}</span>
+                      <span style={rq.metaText}>{p.stage === "cancelled" ? "Dibatalkan oleh pengaju." : "Belum ada yang menerima"}</span>
                     )}
                   </div>
                   <AcceptControl p={p} mine={mine} intakeConfig={intakeConfig} localIsIntake={localIsIntake} onToggle={() => onToggleAccept(r)} onOpenIntakeWs={onOpenIntakeWs} />
@@ -135,7 +139,7 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
 }
 
 function AcceptControl({ p, mine, intakeConfig, localIsIntake, onToggle, onOpenIntakeWs }) {
-  if (p.stage === "removed") return null;
+  if (p.stage === "removed" || p.stage === "cancelled") return null;
   if (!intakeConfig) return <span style={rq.metaText}>Papan penerima belum diatur</span>;
   if (!localIsIntake) {
     return (

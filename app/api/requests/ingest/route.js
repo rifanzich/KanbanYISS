@@ -23,7 +23,7 @@ export async function POST(request) {
     for (const it of items) {
       if (!it || typeof it.id !== "string" || !/^\d{4}-\d{2}$/.test(String(it.monthKey || ""))) continue;
       const req = await getRequest(it.id);
-      if (!req || req.ingested) continue;
+      if (!req || req.ingested || req.cancelledAt) continue;
       await saveRequest({
         ...req,
         ingested: { workspaceId: config.workspaceId, boardId: config.boardId, monthKey: it.monthKey, cardId: requestCardId(req.id), at: Date.now() },
