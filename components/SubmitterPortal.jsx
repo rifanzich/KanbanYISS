@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
-import { Plus, X, LogOut, Sun, Moon, RefreshCw, Send, Inbox, Trash2 } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Plus, X, LogOut, Sun, Moon, Send, Inbox, Trash2 } from "lucide-react";
 import { progressGroup } from "../lib/requestProgress";
 import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, durationLabel, rq } from "./requestUi";
 
@@ -11,6 +11,9 @@ const FILTERS = [
   { key: "done", label: "Selesai" },
   { key: "cancelled", label: "Dibatalkan" },
 ];
+
+// Interval pembaruan otomatis (ms). Berhenti saat tab tersembunyi, langsung menyusul saat tab dibuka lagi.
+const LIVE_INTERVAL = 4000;
 
 const EMPTY_FORM = { title: "", cardType: "", otherType: "", qty: 1, neededBy: "", urgent: false, description: "", link: "" };
 
@@ -26,7 +29,8 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const [requests, setRequests] = useState([]);
   const [cardTypes, setCardTypes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [online, setOnline] = useState(true);
+  const inFlight = useRef(false);
   const [loadError, setLoadError] = useState("");
   const [filter, setFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
@@ -37,30 +41,45 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const [confirm, setConfirm] = useState(null); // { kind: "cancel" | "delete", r }
   const [busyId, setBusyId] = useState("");
 
-  const load = useCallback(async (manual) => {
-    if (manual) setRefreshing(true);
+  const load = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
-      const res = await fetch("/api/requests", { credentials: "include" });
+      const res = await fetch("/api/requests", { credentials: "include", cache: "no-store" });
       const data = await res.json();
       if (!res.ok) {
         setLoadError(data.error || "Gagal memuat pengajuan.");
       } else {
-        setRequests(data.requests || []);
-        setCardTypes(data.cardTypes || []);
+        // Hindari render ulang bila tidak ada perubahan.
+        setRequests((prev) => (JSON.stringify(prev) === JSON.stringify(data.requests || []) ? prev : data.requests || []));
+        setCardTypes((prev) => (JSON.stringify(prev) === JSON.stringify(data.cardTypes || []) ? prev : data.cardTypes || []));
         setLoadError("");
       }
+      setOnline(true);
     } catch (e) {
-      setLoadError("Tidak bisa terhubung ke server.");
+      setOnline(false);
     } finally {
+      inFlight.current = false;
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
+  // Pembaruan otomatis: polling singkat + langsung memuat saat tab kembali aktif / koneksi pulih.
   useEffect(() => {
-    load(false);
-    const t = setInterval(() => load(false), 30000);
-    return () => clearInterval(t);
+    load();
+    const tick = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    const t = setInterval(tick, LIVE_INTERVAL);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("focus", tick);
+    window.addEventListener("online", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("focus", tick);
+      window.removeEventListener("online", tick);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -102,7 +121,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
       setShowForm(false);
       setToast("Pengajuan terkirim. Tim media akan menerimanya segera.");
       setFilter("all");
-      await load(false);
+      await load();
     } catch (e) {
       setFormError("Tidak bisa terhubung ke server.");
     } finally {
@@ -127,7 +146,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
       } else {
         setToast(kind === "cancel" ? "Pengajuan dibatalkan. Kartunya akan dihapus dari papan tim." : "Pengajuan dihapus.");
       }
-      await load(false);
+      await load();
     } catch (e) {
       setToast("Tidak bisa terhubung ke server.");
     } finally {
@@ -200,9 +219,10 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
               </button>
             ))}
           </div>
-          <button style={s.ghostBtn} onClick={() => load(true)} disabled={refreshing} title="Muat ulang">
-            <RefreshCw size={13} style={refreshing ? { animation: "rq-spin 0.8s linear infinite" } : undefined} /> Segarkan
-          </button>
+          <span style={{ ...s.liveTag, color: online ? "#10B981" : "#F59E0B" }} title={online ? "Terhubung — pembaruan otomatis" : "Koneksi terputus, mencoba lagi…"}>
+            <span style={{ ...s.liveDot, background: online ? "#10B981" : "#F59E0B", animation: online ? "rq-pulse 1.6s ease-in-out infinite" : "none" }} />
+            {online ? "Langsung" : "Menyambung ulang…"}
+          </span>
         </div>
 
         {loadError && <div style={s.errorBox}>{loadError}</div>}
@@ -309,7 +329,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
               <br />
               {confirm.kind === "cancel"
                 ? "Kartunya akan dihapus dari papan tim media dan pengajuan ini ditandai dibatalkan."
-                : "Pengajuan ini akan dihapus permanen dari dashboardmu."}
+                : "Pengajuan ini akan dihapus dari dashboardmu, dan kartunya (jika ada) dihapus dari papan tim."}
             </div>
             <div style={s.modalActions}>
               <button style={s.cancelBtn} onClick={() => setConfirm(null)} disabled={!!busyId}>
@@ -322,7 +342,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
           </div>
         </div>
       )}
-      <style>{`@keyframes rq-spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes rq-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }`}</style>
     </div>
   );
 }
@@ -339,10 +359,8 @@ function StatCard({ label, value, color }) {
 function RequestItem({ r, busy, onCancel, onDelete }) {
   const p = r.progress;
   const canCancel = p.stage !== "done" && p.stage !== "cancelled";
-  // Yang masih punya kartu di papan harus dibatalkan dulu; sisanya boleh langsung dihapus.
-  const canDelete = !canCancel || !r.ingested;
-  const href = safeHref(r.link);
-  const target = durationLabel(p.duration);
+  // Hapus hanya untuk yang belum diterima operator ("Menunggu") atau yang sudah dibatalkan.
+  const canDelete = p.stage === "waiting" || p.stage === "cancelled";
   return (
     <article style={s.item}>
       <div style={s.itemTop}>
@@ -436,6 +454,8 @@ const s = {
   lead: { margin: "6px 0 0", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6, maxWidth: 520 },
   primaryBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#3B82F6", color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" },
   cancelBtn: { background: "transparent", border: "1px solid var(--input-border)", color: "var(--text-muted)", borderRadius: 9, padding: "10px 16px", fontSize: 13.5, cursor: "pointer" },
+  liveTag: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600 },
+  liveDot: { width: 7, height: 7, borderRadius: "50%" },
   ghostBtn: { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid var(--card-border)", color: "var(--text-muted)", borderRadius: 8, padding: "6px 11px", fontSize: 12, cursor: "pointer" },
 
   toast: { background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.4)", color: "#10B981", borderRadius: 9, padding: "10px 14px", fontSize: 13, marginBottom: 16 },

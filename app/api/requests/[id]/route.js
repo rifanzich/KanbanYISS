@@ -39,9 +39,11 @@ export async function PATCH(request, { params }) {
   }
 }
 
-// Menghapus pengajuan dari dashboard. Hanya untuk pengajuan yang sudah dibatalkan,
-// sudah selesai, atau belum sempat masuk papan (tidak punya kartu). Pengajuan yang
-// masih berjalan harus dibatalkan dulu, supaya kartunya tidak tertinggal di papan.
+// Menghapus pengajuan dari dashboard. Hanya boleh selama belum diterima operator
+// (status "Menunggu") atau yang sudah dibatalkan sendiri. Setelah diterima, dikerjakan,
+// atau selesai, pengajuan tidak bisa dihapus submitter.
+// Bila kartunya masih ada di papan tim, pengajuan disembunyikan dulu dan dibersihkan otomatis
+// begitu kartunya dihapus dari papan oleh klien operator/admin.
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
@@ -50,12 +52,15 @@ export async function DELETE(request, { params }) {
 
     const config = await getIntakeConfig();
     const { requests } = await attachProgress([req], config);
-    const stage = requests[0].progress.stage;
-    const hasCard = !!req.ingested && !["done", "cancelled", "removed"].includes(stage);
-    if (hasCard) {
-      return NextResponse.json({ error: "Batalkan pengajuan ini dulu sebelum menghapusnya." }, { status: 409 });
+    const progress = requests[0].progress;
+    if (progress.stage !== "waiting" && progress.stage !== "cancelled") {
+      return NextResponse.json({ error: "Pengajuan yang sudah diterima operator tidak bisa dihapus." }, { status: 409 });
     }
-    await deleteRequest(req.id);
+    if (req.ingested && progress.inBoard !== false) {
+      await saveRequest({ ...req, cancelledAt: req.cancelledAt || Date.now(), hiddenBySubmitter: true });
+    } else {
+      await deleteRequest(req.id);
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

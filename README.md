@@ -57,10 +57,11 @@ Admin bisa mengganti jenis akun lewat **Kelola Akun → ikon pensil** (tidak bis
 **Catatan teknis**
 
 - Pengajuan disimpan di Redis dengan key `request:<id>`; papan penerima di `config:intake`.
-- Kartu dibuat oleh aplikasi operator/admin yang sedang terbuka di ruang penerima (bukan langsung oleh server), jadi pengajuan masuk ke papan begitu ada operator/admin yang membuka ruang tersebut (maks. ±30 detik setelah dibuka). Selama belum ada yang membukanya, pengajuan tetap tersimpan dan statusnya "Menunggu".
+- Kartu dibuat oleh aplikasi operator/admin yang sedang terbuka di ruang penerima (bukan langsung oleh server), jadi pengajuan masuk ke papan begitu ada operator/admin yang membuka ruang tersebut (hitungan detik setelah dibuka). Selama belum ada yang membukanya, pengajuan tetap tersimpan dan statusnya "Menunggu".
 - Setiap pengajuan mendapat **nomor antrian** tetap (mis. `#A-012`, dari counter Redis `counter:request-queue`) dan tampil di dashboard submitter beserta jumlah pekerjaan yang masih antre di depannya. Pengajuan lama diberi nomor otomatis menurut urutan waktu.
-- Submitter bisa **Batalkan** pengajuan (selama belum selesai): status jadi "Dibatalkan" dan kartunya dihapus dari papan oleh operator/admin yang sedang membuka ruang penerima. Submitter bisa **Hapus** pengajuan yang sudah dibatalkan, selesai, atau belum masuk papan (`PATCH/DELETE /api/requests/:id`).
-- Kartu pengajuan yang dihapus operator/admin dari papan tidak dibuat ulang, dan pengajuannya **otomatis ikut terhapus** dari dashboard submitter (dibersihkan saat daftar pengajuan dimuat berikutnya, maks. ±30 detik).
+- Submitter bisa **Batalkan** pengajuan (selama belum selesai): status jadi "Dibatalkan" dan kartunya dihapus dari papan oleh operator/admin yang sedang membuka ruang penerima. Submitter bisa **Hapus** pengajuan hanya selama **belum diterima operator** (status "Menunggu") atau yang sudah dibatalkan; setelah diterima, dikerjakan, atau selesai tidak bisa dihapus submitter (`PATCH/DELETE /api/requests/:id`).
+- Kartu pengajuan yang dihapus operator/admin dari papan tidak dibuat ulang, dan pengajuannya **otomatis ikut terhapus** dari dashboard submitter (dibersihkan saat daftar pengajuan dimuat berikutnya, biasanya dalam hitungan detik).
+- Dashboard submitter **diperbarui otomatis** (polling tiap ±4 detik, berhenti saat tab tersembunyi dan langsung menyusul saat tab dibuka lagi) — tidak ada tombol Segarkan. Klien operator/admin memuat pengajuan tiap ±5 detik.
 - Submitter tidak bisa membaca ruang kerja tim maupun daftar akun; mereka hanya bisa melihat pengajuannya sendiri.
 - Sesi kini dicek ke data akun terbaru di setiap request, jadi perubahan jenis akun atau penghapusan akun langsung berlaku.
 

@@ -991,7 +991,9 @@ export default function RuangWorkspace() {
   useEffect(() => {
     if (!isStaff) return;
     loadRequests();
-    const t = setInterval(loadRequests, 30000);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") loadRequests();
+    }, 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, currentUser?.username]);

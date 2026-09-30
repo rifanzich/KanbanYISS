@@ -21,10 +21,16 @@ export async function GET(request) {
 
     // Kartu yang dihapus tim media dari papan -> pengajuannya ikut dihapus otomatis
     // (hilang dari dashboard submitter dan Pengajuan Masuk).
-    const gone = attached.requests.filter((r) => r.progress.stage === "removed");
+    // Pengajuan yang sudah "dihapus" submitter disimpan sementara sampai kartunya benar-benar
+    // hilang dari papan (dihapus oleh klien operator), lalu dibersihkan.
+    const gone = attached.requests.filter((r) => r.progress.stage === "removed" || (r.hiddenBySubmitter && r.progress.inBoard === false));
+    const goneIds = new Set(gone.map((r) => r.id));
     for (const r of gone) await deleteRequest(r.id);
-    let list = attached.requests.filter((r) => r.progress.stage !== "removed");
+    let list = attached.requests.filter((r) => !goneIds.has(r.id));
 
+    // Submitter tidak melihat yang sudah dihapusnya; operator tetap menerimanya di respons
+    // agar kartu yang dibatalkan bisa dibersihkan dari papan (Pengajuan Masuk menyembunyikannya).
+    if (!staff) list = list.filter((r) => !r.hiddenBySubmitter);
     if (!staff) list = list.filter((r) => r.submitter === user.username);
     list.sort((a, b) => b.createdAt - a.createdAt);
     return NextResponse.json({ requests: list, cardTypes: attached.cardTypes, config: staff ? config : undefined });

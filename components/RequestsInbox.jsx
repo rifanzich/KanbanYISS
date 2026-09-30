@@ -21,6 +21,7 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
   // hasil server yang baru menyusul setelah penyimpanan).
   // Pengajuan yang kartunya sudah dihapus tim langsung disembunyikan (server ikut menghapusnya).
   const rows = requests
+    .filter((r) => !r.hiddenBySubmitter)
     .map((r) => ({
       r,
       p: localIsIntake && intakeConfig ? deriveProgress(r, wsData, intakeConfig.boardId) : r.progress,
