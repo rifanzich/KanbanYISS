@@ -2548,7 +2548,20 @@ function Sidebar({
           {showAccountPanel && (
             <div style={styles.addWsPanel}>
               <div style={styles.memberList}>
-                {(accounts || []).map((a) =>
+                {["admin", "operator", "submitter"].map((groupRole) => {
+                  const group = (accounts || [])
+                    .filter((a) => (a.role || "operator") === groupRole)
+                    .sort((x, y) => x.username.localeCompare(y.username, "id", { sensitivity: "base" }));
+                  return (
+                    <div key={groupRole} style={styles.accountGroup}>
+                      <div style={styles.accountGroupHead}>
+                        <span>{ROLE_LABEL[groupRole]}</span>
+                        <span style={styles.accountGroupCount}>{group.length}</span>
+                      </div>
+                      {group.length === 0 ? (
+                        <div style={styles.accountGroupEmpty}>Belum ada akun</div>
+                      ) : (
+                        group.map((a) =>
                   editingAccount === a.username ? (
                     <div key={a.username} style={styles.editAccountRow}>
                       <input
@@ -2589,7 +2602,7 @@ function Sidebar({
                   ) : (
                     <div key={a.username} style={styles.memberRow}>
                       <span>
-                        {a.username} <span style={{ opacity: 0.6, fontSize: 10.5 }}>({ROLE_LABEL[a.role] || ROLE_LABEL.operator})</span>
+                        {a.username}
                       </span>
                       <div style={{ display: "flex", gap: 4 }}>
                         <button style={styles.memberDelete} onClick={() => onStartEditAccount(a.username)} title="Edit akun">
@@ -2601,7 +2614,11 @@ function Sidebar({
                       </div>
                     </div>
                   )
-                )}
+                        )
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <input style={styles.addWsInput} placeholder="Username baru…" value={newAccUsername} onChange={(e) => setNewAccUsername(e.target.value)} />
               <input style={styles.addWsInput} type="password" placeholder="Kata sandi…" value={newAccPassword} onChange={(e) => setNewAccPassword(e.target.value)} />
@@ -5153,7 +5170,11 @@ const styles = {
   fab: { position: "fixed", bottom: 22, right: 22, width: 52, height: 52, borderRadius: "50%", background: "#3B82F6", color: "#fff", border: "none", boxShadow: "0 4px 14px rgba(59,130,246,0.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 40 },
   memberPanel: { position: "fixed", bottom: 86, right: 22, width: 230, background: "var(--modal-bg)", border: "1px solid var(--card-border)", color: "var(--text-primary)", borderRadius: 12, padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 40, display: "flex", flexDirection: "column", gap: 10 },
   memberPanelTitle: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" },
-  memberList: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" },
+  memberList: { display: "flex", flexDirection: "column", gap: 10, maxHeight: 280, overflowY: "auto" },
+  accountGroup: { display: "flex", flexDirection: "column", gap: 4 },
+  accountGroupHead: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-faint)", padding: "0 6px" },
+  accountGroupCount: { fontWeight: 500, opacity: 0.8 },
+  accountGroupEmpty: { fontSize: 12, color: "var(--text-faint)", padding: "2px 6px", fontStyle: "italic" },
   memberRow: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, padding: "4px 6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
   editAccountRow: { display: "flex", flexDirection: "column", gap: 6, padding: "6px", borderRadius: 5, background: "rgba(255,255,255,0.04)" },
   memberDelete: { background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", display: "flex", alignItems: "center" },
