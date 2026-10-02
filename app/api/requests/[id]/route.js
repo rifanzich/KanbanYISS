@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "../../../../lib/auth";
 import { getRequest, saveRequest, deleteRequest, getIntakeConfig, attachProgress } from "../../../../lib/requests";
 import { errorMessage } from "../../../../lib/apiError";
+import { parseRequestInput } from "../../../../lib/requestInput";
 
 // Ambil pengajuan milik user yang sedang login (admin/operator tidak lewat sini).
 async function loadOwned(request, id) {
@@ -14,6 +15,24 @@ async function loadOwned(request, id) {
   return { user, req };
 }
 
+// Mengedit pengajuan. Hanya boleh selama masih "Menunggu" (belum diterima operator).
+// Perubahan menaikkan `rev`; klien admin/operator yang membuka ruang penerima akan
+// menyalin perubahan itu ke kartunya di papan tim (kartu yang sudah diterima tidak diubah).
+async function editRequest(req, body) {
+  if (req.cancelledAt) return NextResponse.json({ error: "Pengajuan yang sudah dibatalkan tidak bisa diedit." }, { status: 409 });
+  const parsed = parseRequestInput(body);
+  if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const config = await getIntakeConfig();
+  const { requests } = await attachProgress([req], config);
+  if (requests[0].progress.stage !== "waiting") {
+    return NextResponse.json({ error: "Pengajuan yang sudah diterima operator tidak bisa diedit lagi." }, { status: 409 });
+  }
+  const saved = { ...req, ...parsed.value, editedAt: Date.now(), rev: (Number(req.rev) || 0) + 1 };
+  await saveRequest(saved);
+  const out = await attachProgress([saved], config);
+  return NextResponse.json({ request: out.requests[0] });
+}
+
 // Membatalkan pengajuan. Kartunya di papan tim dihapus oleh klien operator yang
 // sedang membuka ruang penerima (sama seperti saat kartu dimasukkan).
 export async function PATCH(request, { params }) {
@@ -22,6 +41,7 @@ export async function PATCH(request, { params }) {
     const { error, req } = await loadOwned(request, id);
     if (error) return error;
     const body = await request.json().catch(() => ({}));
+    if (body.action === "edit") return editRequest(req, body);
     if (body.action !== "cancel") return NextResponse.json({ error: "Aksi tidak dikenal." }, { status: 400 });
     if (req.cancelledAt) return NextResponse.json({ error: "Pengajuan sudah dibatalkan." }, { status: 409 });
 

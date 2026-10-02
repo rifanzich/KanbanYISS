@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, LogOut, Sun, Moon, Send, Inbox, Trash2 } from "lucide-react";
+import { Plus, X, LogOut, Sun, Moon, Send, Inbox, Trash2, Pencil } from "lucide-react";
 import { progressGroup } from "../lib/requestProgress";
 import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, durationLabel, rq } from "./requestUi";
 
@@ -39,6 +39,8 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState("");
   const [confirm, setConfirm] = useState(null); // { kind: "cancel" | "delete", r }
+  const [editingId, setEditingId] = useState(null); // id pengajuan yang sedang diedit (null = pengajuan baru)
+  const formBaseRef = useRef(EMPTY_FORM); // isian awal form, pembanding untuk mendeteksi perubahan
   const [closeAsk, setCloseAsk] = useState(false); // verifikasi langkah ke-2 sebelum form ditutup
   const [busyId, setBusyId] = useState("");
 
@@ -92,23 +94,47 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const typeOptions = cardTypes.length ? cardTypes : fallbackCardTypes || [];
   const setField = (patch) => setForm((f) => ({ ...f, ...patch }));
 
+  const openEdit = (r) => {
+    const known = r.cardType && typeOptions.includes(r.cardType);
+    const base = {
+      title: r.title || "",
+      cardType: known ? r.cardType : r.cardType ? "__other" : "",
+      otherType: !known && r.cardType ? r.cardType : "",
+      qty: r.qty || 1,
+      neededBy: r.neededBy || "",
+      urgent: !!r.urgent,
+      description: r.description || "",
+      link: r.link || "",
+    };
+    formBaseRef.current = base;
+    setEditingId(r.id);
+    setForm(base);
+    setFormError("");
+    setCloseAsk(false);
+    setShowForm(true);
+  };
+
   const openForm = () => {
+    formBaseRef.current = EMPTY_FORM;
+    setEditingId(null);
     setForm(EMPTY_FORM);
     setFormError("");
     setCloseAsk(false);
     setShowForm(true);
   };
 
-  // Draft dianggap "berisi" bila ada isian yang berbeda dari form kosong.
+  // Draft dianggap "berisi" bila ada isian yang berbeda dari isian awal form
+  // (form kosong untuk pengajuan baru, atau data pengajuan saat mengedit).
+  const base = formBaseRef.current;
   const isDirty =
-    form.title.trim() !== "" ||
-    form.cardType !== "" ||
-    form.otherType.trim() !== "" ||
-    String(form.qty) !== String(EMPTY_FORM.qty) ||
-    form.neededBy !== "" ||
-    form.urgent ||
-    form.description.trim() !== "" ||
-    form.link.trim() !== "";
+    form.title.trim() !== base.title.trim() ||
+    form.cardType !== base.cardType ||
+    form.otherType.trim() !== base.otherType.trim() ||
+    String(form.qty) !== String(base.qty) ||
+    form.neededBy !== base.neededBy ||
+    form.urgent !== base.urgent ||
+    form.description.trim() !== base.description.trim() ||
+    form.link.trim() !== base.link.trim();
 
   // Langkah 1: tombol Tutup / Batal / Esc. Bila ada draft, minta verifikasi dulu.
   const requestClose = () => {
@@ -120,6 +146,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const discardDraft = () => {
     setCloseAsk(false);
     setShowForm(false);
+    setEditingId(null);
     setForm(EMPTY_FORM);
     setFormError("");
   };
@@ -142,23 +169,30 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
       return;
     }
     const cardType = form.cardType === "__other" ? form.otherType.trim() : form.cardType;
+    if (editingId && !isDirty) {
+      setFormError("Belum ada perubahan untuk disimpan.");
+      return;
+    }
+    const payload = { title, cardType, qty: form.qty, neededBy: form.neededBy, urgent: form.urgent, description: form.description, link: form.link };
     setSubmitting(true);
     setFormError("");
     try {
-      const res = await fetch("/api/requests", {
-        method: "POST",
+      const res = await fetch(editingId ? `/api/requests/${editingId}` : "/api/requests", {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ title, cardType, qty: form.qty, neededBy: form.neededBy, urgent: form.urgent, description: form.description, link: form.link }),
+        body: JSON.stringify(editingId ? { action: "edit", ...payload } : payload),
       });
       const data = await res.json();
       if (!res.ok) {
-        setFormError(data.error || "Gagal mengirim pengajuan.");
+        setFormError(data.error || (editingId ? "Gagal menyimpan perubahan." : "Gagal mengirim pengajuan."));
+        if (editingId && res.status === 409) await load();
         return;
       }
       setShowForm(false);
       setCloseAsk(false);
-      setToast("Pengajuan terkirim. Tim media akan menerimanya segera.");
+      setToast(editingId ? "Perubahan pengajuan disimpan." : "Pengajuan terkirim. Tim media akan menerimanya segera.");
+      setEditingId(null);
       setFilter("all");
       await load();
     } catch (e) {
@@ -277,7 +311,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
         ) : (
           <div style={s.list}>
             {visible.map((r) => (
-              <RequestItem key={r.id} r={r} busy={busyId === r.id} onCancel={() => setConfirm({ kind: "cancel", r })} onDelete={() => setConfirm({ kind: "delete", r })} />
+              <RequestItem key={r.id} r={r} busy={busyId === r.id} onEdit={() => openEdit(r)} onCancel={() => setConfirm({ kind: "cancel", r })} onDelete={() => setConfirm({ kind: "delete", r })} />
             ))}
           </div>
         )}
@@ -285,9 +319,9 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
 
       {showForm && (
         <div style={s.overlay}>
-          <div style={s.modal} role="dialog" aria-modal="true" aria-label="Form pengajuan">
+          <div style={s.modal} role="dialog" aria-modal="true" aria-label={editingId ? "Form edit pengajuan" : "Form pengajuan"}>
             <div style={s.modalHead}>
-              <div style={s.modalTitle}>Ajukan Pekerjaan</div>
+              <div style={s.modalTitle}>{editingId ? "Edit Pengajuan" : "Ajukan Pekerjaan"}</div>
               <button style={s.iconBtnPlain} onClick={requestClose} aria-label="Tutup">
                 <X size={18} />
               </button>
@@ -326,7 +360,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
 
             <label style={s.label}>
               Dibutuhkan paling lambat
-              <input style={s.input} type="date" min={todayInputValue()} value={form.neededBy} onChange={(e) => setField({ neededBy: e.target.value })} />
+              <input style={s.input} type="date" min={editingId && form.neededBy && form.neededBy < todayInputValue() ? form.neededBy : todayInputValue()} value={form.neededBy} onChange={(e) => setField({ neededBy: e.target.value })} />
             </label>
 
             <label style={s.checkRow}>
@@ -353,7 +387,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
                 Batal
               </button>
               <button style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }} onClick={submit} disabled={submitting}>
-                <Send size={14} /> {submitting ? "Mengirim…" : "Kirim Pengajuan"}
+                <Send size={14} /> {submitting ? (editingId ? "Menyimpan…" : "Mengirim…") : editingId ? "Simpan Perubahan" : "Kirim Pengajuan"}
               </button>
             </div>
           </div>
@@ -362,13 +396,17 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
       {showForm && closeAsk && (
         <div style={{ ...s.overlay, zIndex: 70 }} onClick={() => setCloseAsk(false)}>
           <div style={{ ...s.modal, maxWidth: 400 }} onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-label="Konfirmasi tutup form">
-            <div style={s.modalTitle}>Tutup form pengajuan?</div>
+            <div style={s.modalTitle}>{editingId ? "Tutup tanpa menyimpan?" : "Tutup form pengajuan?"}</div>
             <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--text-muted)" }}>
-              Isian yang sudah kamu ketik <strong style={{ color: "var(--text-primary)" }}>belum dikirim</strong> dan akan hilang jika form ditutup.
+              {editingId ? (
+                <>Perubahan yang kamu buat <strong style={{ color: "var(--text-primary)" }}>belum disimpan</strong> dan akan hilang jika form ditutup.</>
+              ) : (
+                <>Isian yang sudah kamu ketik <strong style={{ color: "var(--text-primary)" }}>belum dikirim</strong> dan akan hilang jika form ditutup.</>
+              )}
             </div>
             <div style={s.modalActions}>
               <button style={{ ...s.cancelBtn, color: "#EF4444", borderColor: "#EF4444" }} onClick={discardDraft}>
-                Ya, tutup &amp; buang
+                {editingId ? "Ya, tutup" : "Ya, tutup & buang"}
               </button>
               <button style={s.primaryBtn} onClick={() => setCloseAsk(false)} autoFocus>
                 Lanjutkan mengisi
@@ -413,11 +451,13 @@ function StatCard({ label, value, color }) {
   );
 }
 
-function RequestItem({ r, busy, onCancel, onDelete }) {
+function RequestItem({ r, busy, onEdit, onCancel, onDelete }) {
   const p = r.progress;
   const canCancel = p.stage !== "done" && p.stage !== "cancelled";
   // Hapus hanya untuk yang belum diterima operator ("Menunggu") atau yang sudah dibatalkan.
   const canDelete = p.stage === "waiting" || p.stage === "cancelled";
+  // Edit hanya selama belum diterima operator (status "Menunggu").
+  const canEdit = p.stage === "waiting" && !r.cancelledAt;
   const href = safeHref(r.link);
   const target = durationLabel(p.duration);
   return (
@@ -433,6 +473,7 @@ function RequestItem({ r, busy, onCancel, onDelete }) {
             Diajukan {formatDateID(r.createdAt)}
             {r.cardType ? ` · ${r.cardType}${r.qty > 1 ? ` × ${r.qty}` : ""}` : r.qty > 1 ? ` · ${r.qty} item` : ""}
             {r.neededBy ? ` · Dibutuhkan ${formatDateInput(r.neededBy)}` : ""}
+            {r.editedAt ? ` · Diedit ${formatDateID(r.editedAt)}` : ""}
           </div>
         </div>
         <StatusPill progress={p} />
@@ -461,8 +502,13 @@ function RequestItem({ r, busy, onCancel, onDelete }) {
         {target && p.stage !== "done" && p.stage !== "cancelled" && <span style={{ ...rq.metaText, marginLeft: "auto" }}>Target pengerjaan: {target}</span>}
       </div>
 
-      {(canCancel || canDelete) && (
+      {(canEdit || canCancel || canDelete) && (
         <div style={s.actionRow}>
+          {canEdit && (
+            <button style={s.editGhost} onClick={onEdit} disabled={busy}>
+              <Pencil size={12} /> Edit
+            </button>
+          )}
           {canCancel && (
             <button style={s.dangerGhost} onClick={onCancel} disabled={busy}>
               Batalkan
@@ -538,6 +584,7 @@ const s = {
   itemTitle: { margin: 0, fontSize: 15.5, fontWeight: 600, letterSpacing: "-0.01em", wordBreak: "break-word" },
   teamRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 14 },
   actionRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+  editGhost: { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", border: "1px solid rgba(59,130,246,0.45)", color: "#3B82F6", borderRadius: 8, padding: "5px 11px", fontSize: 12, cursor: "pointer" },
   dangerGhost: { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", border: "1px solid rgba(239,68,68,0.4)", color: "#EF4444", borderRadius: 8, padding: "5px 11px", fontSize: 12, cursor: "pointer" },
   details: { marginTop: 12, borderTop: "1px solid var(--card-border)", paddingTop: 10 },
   summary: { fontSize: 12.5, color: "#3B82F6", cursor: "pointer", fontWeight: 500 },

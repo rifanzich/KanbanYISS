@@ -231,6 +231,7 @@ function buildCardFromRequest(r, cardTypes) {
     checked: false,
     priority: !!r.urgent,
     requestId: r.id,
+    requestRev: Number(r.rev) || 0,
     requester: r.submitter,
     description,
     neededBy: r.neededBy || "",
@@ -1068,6 +1069,48 @@ export default function RuangWorkspace() {
           });
         }
         next = { ...next, calendarNotes, boards: { ...next.boards, [t.boardId]: { ...board, monthly: { ...board.monthly, [t.monthKey]: { ...mb, cards, columns } } } } };
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, intakeConfig, wsData, activeWs?.id, ready, isStaff]);
+
+  // Pengajuan yang diedit submitter (hanya bisa selama masih "Menunggu"): salin isian
+  // terbarunya ke kartu di papan penerima. Kartu yang sudah diterima/dikerjakan tidak diubah.
+  useEffect(() => {
+    if (!isStaff || !ready || !wsData || !activeWs || !intakeConfig) return;
+    if (activeWs.id !== intakeConfig.workspaceId || !wsData.boards[intakeConfig.boardId]) return;
+    const targets = [];
+    for (const r of requests) {
+      if (!r.ingested || r.cancelledAt || !r.rev) continue;
+      const loc = locateRequestCard(wsData, r, intakeConfig.boardId);
+      if (!loc || (Number(loc.card.requestRev) || 0) >= r.rev) continue;
+      if ((loc.card.involvedMembers || []).length > 0 || loc.columnIndex > 0) continue;
+      targets.push({ loc, r });
+    }
+    if (!targets.length) return;
+    setWsData((d) => {
+      if (!d) return d;
+      let next = d;
+      for (const { loc, r } of targets) {
+        const board = next.boards[loc.boardId];
+        const mb = board && board.monthly && board.monthly[loc.monthKey];
+        const card = mb && mb.cards && mb.cards[loc.cardId];
+        if (!card || (Number(card.requestRev) || 0) >= r.rev) continue;
+        const fresh = buildCardFromRequest(r, next.cardTypes);
+        const updated = {
+          ...card,
+          text: fresh.text,
+          cardType: fresh.cardType,
+          qty: fresh.qty,
+          priority: fresh.priority,
+          description: fresh.description,
+          neededBy: fresh.neededBy,
+          link: fresh.link,
+          requestRev: r.rev,
+        };
+        if (fresh.neededBy !== (card.neededBy || "")) updated.duration = fresh.duration;
+        next = { ...next, boards: { ...next.boards, [loc.boardId]: { ...board, monthly: { ...board.monthly, [loc.monthKey]: { ...mb, cards: { ...mb.cards, [loc.cardId]: updated } } } } } };
       }
       return next;
     });
