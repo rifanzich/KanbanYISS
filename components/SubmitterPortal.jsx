@@ -39,6 +39,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState("");
   const [confirm, setConfirm] = useState(null); // { kind: "cancel" | "delete", r }
+  const [closeAsk, setCloseAsk] = useState(false); // verifikasi langkah ke-2 sebelum form ditutup
   const [busyId, setBusyId] = useState("");
 
   const load = useCallback(async () => {
@@ -94,8 +95,45 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
   const openForm = () => {
     setForm(EMPTY_FORM);
     setFormError("");
+    setCloseAsk(false);
     setShowForm(true);
   };
+
+  // Draft dianggap "berisi" bila ada isian yang berbeda dari form kosong.
+  const isDirty =
+    form.title.trim() !== "" ||
+    form.cardType !== "" ||
+    form.otherType.trim() !== "" ||
+    String(form.qty) !== String(EMPTY_FORM.qty) ||
+    form.neededBy !== "" ||
+    form.urgent ||
+    form.description.trim() !== "" ||
+    form.link.trim() !== "";
+
+  // Langkah 1: tombol Tutup / Batal / Esc. Bila ada draft, minta verifikasi dulu.
+  const requestClose = () => {
+    if (submitting) return;
+    if (isDirty) setCloseAsk(true);
+    else setShowForm(false);
+  };
+  // Langkah 2: konfirmasi "Ya, tutup" -> draft dibuang.
+  const discardDraft = () => {
+    setCloseAsk(false);
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    setFormError("");
+  };
+
+  useEffect(() => {
+    if (!showForm) return;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (closeAsk) setCloseAsk(false);
+      else requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const submit = async () => {
     const title = form.title.trim();
@@ -119,6 +157,7 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
         return;
       }
       setShowForm(false);
+      setCloseAsk(false);
       setToast("Pengajuan terkirim. Tim media akan menerimanya segera.");
       setFilter("all");
       await load();
@@ -245,11 +284,11 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
       </main>
 
       {showForm && (
-        <div style={s.overlay} onClick={() => !submitting && setShowForm(false)}>
-          <div style={s.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Form pengajuan">
+        <div style={s.overlay}>
+          <div style={s.modal} role="dialog" aria-modal="true" aria-label="Form pengajuan">
             <div style={s.modalHead}>
               <div style={s.modalTitle}>Ajukan Pekerjaan</div>
-              <button style={s.iconBtnPlain} onClick={() => setShowForm(false)} aria-label="Tutup">
+              <button style={s.iconBtnPlain} onClick={requestClose} aria-label="Tutup">
                 <X size={18} />
               </button>
             </div>
@@ -310,11 +349,29 @@ export default function SubmitterPortal({ user, theme, onToggleTheme, onLogout, 
             {formError && <div style={s.errorBox}>{formError}</div>}
 
             <div style={s.modalActions}>
-              <button style={s.cancelBtn} onClick={() => setShowForm(false)} disabled={submitting}>
+              <button style={s.cancelBtn} onClick={requestClose} disabled={submitting}>
                 Batal
               </button>
               <button style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }} onClick={submit} disabled={submitting}>
                 <Send size={14} /> {submitting ? "Mengirim…" : "Kirim Pengajuan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showForm && closeAsk && (
+        <div style={{ ...s.overlay, zIndex: 70 }} onClick={() => setCloseAsk(false)}>
+          <div style={{ ...s.modal, maxWidth: 400 }} onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-label="Konfirmasi tutup form">
+            <div style={s.modalTitle}>Tutup form pengajuan?</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--text-muted)" }}>
+              Isian yang sudah kamu ketik <strong style={{ color: "var(--text-primary)" }}>belum dikirim</strong> dan akan hilang jika form ditutup.
+            </div>
+            <div style={s.modalActions}>
+              <button style={{ ...s.cancelBtn, color: "#EF4444", borderColor: "#EF4444" }} onClick={discardDraft}>
+                Ya, tutup &amp; buang
+              </button>
+              <button style={s.primaryBtn} onClick={() => setCloseAsk(false)} autoFocus>
+                Lanjutkan mengisi
               </button>
             </div>
           </div>
