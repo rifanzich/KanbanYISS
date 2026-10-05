@@ -313,6 +313,45 @@ const sampleWorkspaceData = () => {
   };
 };
 
+// Kolom papan dikunci: selalu tiga kolom ini, dalam urutan ini. Progres pengajuan
+// (Diterima / Dikerjakan / Selesai) dihitung dari posisi kolom, jadi struktur ini tidak boleh berubah.
+const FIXED_COLUMNS = ["Belum Dikerjakan", "Sedang Dikerjakan", "Selesai"];
+
+// Memulihkan struktur tiga kolom pada satu bulan, tanpa membuang kartu:
+//  - kolom bernama sama dipakai apa adanya; kolom bernama lain mengisi slot yang kosong
+//  - slot yang hilang (mis. kolom pernah terhapus) dibuat ulang dalam keadaan kosong
+//  - kartu dari kolom ekstra dipindah ke "Selesai"; kartu tanpa kolom dikembalikan ke "Belum Dikerjakan"
+function normalizeColumns(columns, cards, monthKey) {
+  const key = (n) => String(n || "").trim().toLowerCase();
+  const used = new Set();
+  const slotIdx = FIXED_COLUMNS.map((name) => {
+    const i = columns.findIndex((c, idx) => !used.has(idx) && key(c.name) === key(name));
+    if (i >= 0) used.add(i);
+    return i;
+  });
+  const leftovers = columns.map((c, i) => i).filter((i) => !used.has(i));
+  const takenIds = new Set();
+  const result = FIXED_COLUMNS.map((name, slot) => {
+    let src = slotIdx[slot] >= 0 ? columns[slotIdx[slot]] : null;
+    if (!src && leftovers.length) src = columns[leftovers.shift()];
+    let id = src && src.id ? src.id : `${monthKey}-c${slot}`;
+    if (takenIds.has(id)) id = uid();
+    takenIds.add(id);
+    return { id, name, cardIds: src && Array.isArray(src.cardIds) ? [...src.cardIds] : [] };
+  });
+  leftovers.forEach((i) => {
+    (columns[i].cardIds || []).forEach((cid) => {
+      if (!result[2].cardIds.includes(cid)) result[2].cardIds.push(cid);
+    });
+  });
+  const placed = new Set();
+  result.forEach((c) => c.cardIds.forEach((cid) => placed.add(cid)));
+  Object.keys(cards).forEach((cid) => {
+    if (!placed.has(cid)) result[0].cardIds.push(cid);
+  });
+  return result;
+}
+
 function normalizeWsData(raw) {
   const base = raw ? raw : emptyWorkspaceData();
   const cardTypes = base.cardTypes && base.cardTypes.length ? base.cardTypes : [...DEFAULT_CARD_TYPES];
@@ -325,7 +364,7 @@ function normalizeWsData(raw) {
 
   // Normalizes one month's { columns, cards } bucket: fills in defaults that
   // older cards may be missing (involvedMembers/cardType/qty/startedAt).
-  const normalizeMonthBoard = (monthBoard) => {
+  const normalizeMonthBoard = (monthBoard, monthKey) => {
     const columns = monthBoard.columns || [];
     const cards = { ...(monthBoard.cards || {}) };
     Object.keys(cards).forEach((cid) => {
@@ -342,7 +381,7 @@ function normalizeWsData(raw) {
       }
       cards[cid] = { ...card, involvedMembers, cardType: card.cardType || "", qty, priority: !!card.priority, startedAt };
     });
-    return { columns, cards };
+    return { columns: normalizeColumns(columns, cards, monthKey), cards };
   };
 
   Object.keys(boards).forEach((bid) => {
@@ -355,7 +394,7 @@ function normalizeWsData(raw) {
       monthly = { [currentMonthKey()]: { columns: board.columns || defaultColumnsTemplate(), cards: board.cards || {} } };
     }
     Object.keys(monthly).forEach((mk) => {
-      monthly[mk] = normalizeMonthBoard(monthly[mk]);
+      monthly[mk] = normalizeMonthBoard(monthly[mk], mk);
     });
     boards[bid] = { id: board.id, name: board.name, monthly };
   });
@@ -1636,43 +1675,6 @@ export default function RuangWorkspace() {
     });
   };
 
-  const addColumn = (boardId, monthKey) => {
-    patchMonthBoard(boardId, monthKey, (mb) => ({ ...mb, columns: [...mb.columns, { id: uid(), name: "Kolom Baru", cardIds: [] }] }));
-  };
-
-  const renameColumn = (boardId, monthKey, colId, name) => {
-    patchMonthBoard(boardId, monthKey, (mb) => ({ ...mb, columns: mb.columns.map((c) => (c.id === colId ? { ...c, name } : c)) }));
-  };
-
-  const deleteColumn = (boardId, monthKey, colId) => {
-    setWsData((d) => {
-      const board = d.boards[boardId];
-      if (!board) return d;
-      const monthBoard = getMonthBoard(board, monthKey);
-      const col = monthBoard.columns.find((c) => c.id === colId);
-      const removedIds = col ? col.cardIds : [];
-      const cards = { ...monthBoard.cards };
-      removedIds.forEach((cid) => delete cards[cid]);
-      const updatedMonthBoard = { ...monthBoard, columns: monthBoard.columns.filter((c) => c.id !== colId), cards };
-      const boards = { ...d.boards, [boardId]: { ...board, monthly: { ...(board.monthly || {}), [monthKey]: updatedMonthBoard } } };
-
-      let calendarNotes = d.calendarNotes;
-      if (removedIds.length) {
-        Object.keys(calendarNotes || {}).forEach((dateStr) => {
-          const list = calendarNotes[dateStr];
-          const filtered = list.filter((n) => !(n.boardId === boardId && n.monthKey === monthKey && removedIds.includes(n.cardId)));
-          if (filtered.length !== list.length) {
-            if (calendarNotes === d.calendarNotes) calendarNotes = { ...calendarNotes };
-            if (filtered.length) calendarNotes[dateStr] = filtered;
-            else delete calendarNotes[dateStr];
-          }
-        });
-      }
-
-      return { ...d, boards, calendarNotes };
-    });
-  };
-
   // Returns the new card's id synchronously (the id is minted before the
   // state update, not inside it) so callers — like the calendar sync — can
   // immediately remember which card they just created.
@@ -2193,9 +2195,6 @@ export default function RuangWorkspace() {
             isAdmin={isAdmin}
             currentUsername={currentUser.username}
             onRename={renameBoard}
-            onAddColumn={addColumn}
-            onRenameColumn={renameColumn}
-            onDeleteColumn={deleteColumn}
             onAddCard={addCard}
             onDeleteCard={deleteCard}
             onMoveCard={moveCard}
@@ -3315,7 +3314,7 @@ function CardTitle({ text, checked, priority, fromCalendar, checkboxDisabled, on
   );
 }
 
-function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, isAdmin, currentUsername, onRename, onAddColumn, onRenameColumn, onDeleteColumn, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard, intakeBoardId, canSetIntake, onSetIntake, onToggleAccept }) {
+function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType, onDeleteCardType, isAdmin, currentUsername, onRename, onAddCard, onDeleteCard, onMoveCard, onUpdateCard, onToggleCheck, onTogglePriority, onRequestConfirm, dragCard, setDragCard, intakeBoardId, canSetIntake, onSetIntake, onToggleAccept }) {
   const [drafts, setDrafts] = useState({});
   const [dragOverCol, setDragOverCol] = useState(null);
   // Papan bulanan: setiap bulan punya kolom & kartunya sendiri. Dibuka
@@ -3478,16 +3477,8 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
           >
             <div style={styles.columnHead}>
               <span style={{ ...styles.columnDot, background: columnDotColor(colIndex) }} />
-              <input style={styles.columnTitle} value={col.name} onChange={(e) => onRenameColumn(board.id, viewMonth, col.id, e.target.value)} />
+              <span style={{ ...styles.columnTitle, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{col.name}</span>
               <span style={{ ...styles.columnCountBadge, color: columnDotColor(colIndex) }}>{searching ? `${col.cardIds.filter((id) => monthBoard.cards[id] && cardMatchesQuery(monthBoard.cards[id], searchQuery)).length}/${col.cardIds.length}` : col.cardIds.length}</span>
-              <button
-                style={styles.columnDelete}
-                onClick={() => {
-                  onRequestConfirm(`Hapus kolom "${col.name}" beserta isinya?`, () => onDeleteColumn(board.id, viewMonth, col.id));
-                }}
-              >
-                <X size={14} />
-              </button>
             </div>
 
             <div className="rw-card-stack" style={styles.cardStack}>
@@ -3672,9 +3663,6 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
             )}
           </div>
         ))}
-        <button style={styles.addColumnBtn} onClick={() => onAddColumn(board.id, viewMonth)}>
-          + Kolom
-        </button>
       </div>
     </div>
   );
