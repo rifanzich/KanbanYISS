@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, X, LogOut, Sun, Moon, Send, Inbox, Trash2, Pencil } from "lucide-react";
 import { progressGroup } from "../lib/requestProgress";
-import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, durationLabel, rq } from "./requestUi";
+import { LogoMark, StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, durationLabel, rq, CopyButton } from "./requestUi";
 
 const FILTERS = [
   { key: "all", label: "Semua" },
@@ -533,6 +533,9 @@ function RequestItem({ r, busy, onEdit, onCancel, onDelete }) {
               </a>
             </div>
           )}
+          <div style={{ marginTop: 8 }}>
+            <CopyButton text={[r.description, r.link].filter(Boolean).join("\n")} />
+          </div>
         </details>
       )}
     </article>

@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import SubmitterPortal from "./SubmitterPortal";
 import RequestsInbox from "./RequestsInbox";
-import { formatDateInput, safeHref } from "./requestUi";
+import { formatDateInput, safeHref, CopyButton, selectableText } from "./requestUi";
 import { deriveProgress, progressGroup, locateRequestCard, requestCardId } from "../lib/requestProgress";
 import { ROLE_LABEL } from "../lib/roles";
 
@@ -3525,7 +3525,12 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
                     />
 
                     {card.requestId && (
-                      <div style={styles.requestBlock}>
+                      <div
+                        style={styles.requestBlock}
+                        // Kartu bisa di-drag; selama kursor di blok ini, drag dimatikan agar teks bisa diblok & disalin.
+                        onMouseEnter={(e) => e.currentTarget.closest(".rw-card")?.setAttribute("draggable", "false")}
+                        onMouseLeave={(e) => e.currentTarget.closest(".rw-card")?.setAttribute("draggable", "true")}
+                      >
                         <div style={styles.requestHead}>
                           <Inbox size={11} /> Pengajuan dari <strong>{card.requester}</strong>
                         </div>
@@ -3539,6 +3544,9 @@ function BoardView({ board, members, cardTypes, onAddCardType, onRenameCardType,
                                 Link referensi
                               </a>
                             )}
+                            <div style={{ marginTop: 6 }}>
+                              <CopyButton text={[card.description, card.link].filter(Boolean).join("\n")} />
+                            </div>
                           </details>
                         )}
                       </div>
@@ -5236,12 +5244,12 @@ const styles = {
   navBadge: { background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, minWidth: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px" },
   intakeBadge: { display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start", fontSize: 12, color: "#059669", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 6, padding: "6px 10px" },
   intakeBtn: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", background: "transparent", border: "1px dashed var(--input-border)", borderRadius: 6, padding: "6px 10px", cursor: "pointer" },
-  requestBlock: { display: "flex", flexDirection: "column", gap: 3, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 7, padding: "6px 8px" },
+  requestBlock: { ...selectableText, cursor: "default", display: "flex", flexDirection: "column", gap: 3, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 7, padding: "6px 8px" },
   requestHead: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#3B82F6" },
   requestMeta: { fontSize: 11, color: "var(--text-muted)" },
   requestDetails: { marginTop: 2 },
   requestSummary: { fontSize: 11, color: "var(--text-muted)", cursor: "pointer" },
-  requestDesc: { fontSize: 12, lineHeight: 1.5, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 },
+  requestDesc: { ...selectableText, fontSize: 12, lineHeight: 1.5, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 },
   requestLink: { display: "inline-block", fontSize: 11.5, color: "#3B82F6", marginTop: 4 },
   acceptBtn: { background: "#10B981", color: "#fff", border: "none", borderRadius: 6, padding: "7px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" },
   acceptedBtn: { background: "rgba(16,185,129,0.14)", color: "#10B981", border: "1px solid rgba(16,185,129,0.4)", borderRadius: 6, padding: "6px 0", fontSize: 11.5, fontWeight: 600, cursor: "pointer" },

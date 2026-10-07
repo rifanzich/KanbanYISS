@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { PROGRESS_STEPS } from "../lib/requestProgress";
 
 // Potongan UI yang dipakai bersama oleh portal pengaju (SubmitterPortal) dan
@@ -86,7 +87,53 @@ export function ProgressTrack({ progress, compact }) {
   );
 }
 
+// Menyalin teks ke clipboard. Memakai Clipboard API, dengan cadangan untuk
+// halaman non-HTTPS / browser lama. Mengembalikan true bila berhasil.
+export async function copyText(text) {
+  const value = String(text || "");
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Tombol kecil "Salin" — berubah jadi "Tersalin" sesaat setelah berhasil.
+export function CopyButton({ text, label = "Salin", style }) {
+  const [state, setState] = useState("idle"); // idle | done | fail
+  const onClick = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ok = await copyText(text);
+    setState(ok ? "done" : "fail");
+    setTimeout(() => setState("idle"), 1800);
+  };
+  return (
+    <button type="button" onClick={onClick} style={{ ...rq.copyBtn, ...(style || {}) }} title="Salin teks ke clipboard">
+      {state === "done" ? "✓ Tersalin" : state === "fail" ? "Gagal menyalin" : label}
+    </button>
+  );
+}
+
+// Teks yang boleh diblok & disalin (menimpa user-select:none milik kartu papan).
+export const selectableText = { userSelect: "text", WebkitUserSelect: "text", WebkitTouchCallout: "default", cursor: "text" };
+
 export const rq = {
+  copyBtn: { display: "inline-flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: "#3B82F6", background: "transparent", border: "1px solid rgba(59,130,246,0.4)", borderRadius: 6, padding: "2px 9px", cursor: "pointer", lineHeight: 1.5 },
   pill: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 999, border: "1px solid", whiteSpace: "nowrap" },
   pillDot: { width: 6, height: 6, borderRadius: "50%" },
   track: { display: "flex", width: "100%" },
@@ -100,6 +147,6 @@ export const rq = {
   metaText: { fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 },
   queueBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: "#3B82F6", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.35)", borderRadius: 6, padding: "2px 8px", letterSpacing: 0.3, whiteSpace: "nowrap" },
   urgentBadge: { fontSize: 10.5, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999, padding: "2px 8px", letterSpacing: 0.3 },
-  desc: { fontSize: 13, lineHeight: 1.6, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word" },
-  link: { fontSize: 12.5, color: "#3B82F6", wordBreak: "break-all" },
+  desc: { fontSize: 13, lineHeight: 1.6, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", ...selectableText },
+  link: { fontSize: 12.5, color: "#3B82F6", wordBreak: "break-all", ...selectableText },
 };

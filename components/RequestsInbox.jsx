@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { RefreshCw, Inbox, Check } from "lucide-react";
 import { deriveProgress, progressGroup } from "../lib/requestProgress";
-import { StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, rq } from "./requestUi";
+import { StatusPill, ProgressTrack, formatDateID, formatDateInput, formatQueueNo, safeHref, rq, CopyButton } from "./requestUi";
 
 const FILTERS = [
   { key: "waiting", label: "Belum diterima" },
@@ -107,6 +107,9 @@ export default function RequestsInbox({ requests, intakeConfig, isAdmin, current
                         </a>
                       </div>
                     )}
+                    <div style={{ marginTop: 8 }}>
+                      <CopyButton text={[r.description, r.link].filter(Boolean).join("\n")} />
+                    </div>
                   </details>
                 )}
 
